@@ -1,0 +1,106 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  JSON logs to stdout, ERROR to stderr (docs/CONTRACTS.md, section 10), collected by the platform and shipped to Loki.
+  Field names: timestamp, level, logger, message, plus the MDC keys below and structured key-value pairs
+  (e.g. type=dboperation) added through the SLF4J 2 fluent API.
+  traceId/spanId are written into the MDC by the OpenTelemetry Java agent (logback MDC instrumentation).
+-->
+<configuration>
+    <statusListener class="ch.qos.logback.core.status.NopStatusListener"/>
+
+    <appender name="JSON" class="ch.qos.logback.core.ConsoleAppender">
+        <!-- Error/fatal go to stderr, everything else to stdout (Promtail relies on the split). -->
+        <filter class="ch.qos.logback.classic.filter.LevelFilter">
+            <level>ERROR</level>
+            <onMatch>DENY</onMatch>
+            <onMismatch>NEUTRAL</onMismatch>
+        </filter>
+        <encoder class="net.logstash.logback.encoder.LogstashEncoder">
+            <fieldNames>
+                <timestamp>timestamp</timestamp>
+                <logger>logger</logger>
+                <level>level</level>
+                <message>message</message>
+                <thread>thread</thread>
+                <version>[ignore]</version>
+                <levelValue>[ignore]</levelValue>
+            </fieldNames>
+            <includeMdcKeyName>requestId</includeMdcKeyName>
+            <includeMdcKeyName>userId</includeMdcKeyName>
+            <includeMdcKeyName>tenantId</includeMdcKeyName>
+            <includeMdcKeyName>wardId</includeMdcKeyName>
+            <includeMdcKeyName>traceId</includeMdcKeyName>
+            <includeMdcKeyName>spanId</includeMdcKeyName>
+            <includeMdcKeyName>job</includeMdcKeyName>
+            <includeMdcKeyName>outboxEventId</includeMdcKeyName>
+            <throwableConverter class="net.logstash.logback.stacktrace.ShortenedThrowableConverter">
+                <maxDepthPerThrowable>30</maxDepthPerThrowable>
+                <rootCauseFirst>true</rootCauseFirst>
+            </throwableConverter>
+        </encoder>
+    </appender>
+
+    <appender name="JSON_ERR" class="ch.qos.logback.core.ConsoleAppender">
+        <target>System.err</target>
+        <filter class="ch.qos.logback.classic.filter.ThresholdFilter">
+            <level>ERROR</level>
+        </filter>
+        <encoder class="net.logstash.logback.encoder.LogstashEncoder">
+            <fieldNames>
+                <timestamp>timestamp</timestamp>
+                <logger>logger</logger>
+                <level>level</level>
+                <message>message</message>
+                <thread>thread</thread>
+                <version>[ignore]</version>
+                <levelValue>[ignore]</levelValue>
+            </fieldNames>
+            <includeMdcKeyName>requestId</includeMdcKeyName>
+            <includeMdcKeyName>userId</includeMdcKeyName>
+            <includeMdcKeyName>tenantId</includeMdcKeyName>
+            <includeMdcKeyName>wardId</includeMdcKeyName>
+            <includeMdcKeyName>traceId</includeMdcKeyName>
+            <includeMdcKeyName>spanId</includeMdcKeyName>
+            <includeMdcKeyName>job</includeMdcKeyName>
+            <includeMdcKeyName>outboxEventId</includeMdcKeyName>
+            <throwableConverter class="net.logstash.logback.stacktrace.ShortenedThrowableConverter">
+                <maxDepthPerThrowable>30</maxDepthPerThrowable>
+                <rootCauseFirst>true</rootCauseFirst>
+            </throwableConverter>
+        </encoder>
+    </appender>
+
+    <!-- Async so a slow stdout never blocks request threads; never drops WARN/ERROR. -->
+    <appender name="ASYNC" class="ch.qos.logback.classic.AsyncAppender">
+        <appender-ref ref="JSON"/>
+        <queueSize>8192</queueSize>
+        <discardingThreshold>0</discardingThreshold>
+        <neverBlock>true</neverBlock>
+    </appender>
+
+    <appender name="ASYNC_ERR" class="ch.qos.logback.classic.AsyncAppender">
+        <appender-ref ref="JSON_ERR"/>
+        <queueSize>8192</queueSize>
+        <discardingThreshold>0</discardingThreshold>
+        <neverBlock>true</neverBlock>
+    </appender>
+
+    <logger name="com.carevoice" level="${LOG_LEVEL:-${CAREVOICE_LOG_LEVEL:-INFO}}"/>
+    <logger name="io.ktor" level="INFO"/>
+    <logger name="io.netty" level="WARN"/>
+    <!-- Ktor's MicrometerMetrics plugin always adds a MeterFilter on install (percentiles for ktor.http.server.requests),
+         after the pool, outbox and cache meters exist, so Micrometer warns "A MeterFilter is being configured after a
+         Meter has been registered". Harmless here: that filter only touches the Ktor request timer, which is created
+         later, on the first request, and CareVoice registers no MeterFilter of its own. ERROR keeps real failures.
+         Micrometer logs this under the registry's runtime class, hence the Prometheus registry's name here. -->
+    <logger name="io.micrometer.prometheusmetrics.PrometheusMeterRegistry" level="ERROR"/>
+    <logger name="com.zaxxer.hikari" level="WARN"/>
+    <logger name="org.flywaydb" level="INFO"/>
+    <logger name="io.lettuce" level="WARN"/>
+    <logger name="com.rabbitmq" level="WARN"/>
+
+    <root level="INFO">
+        <appender-ref ref="ASYNC"/>
+        <appender-ref ref="ASYNC_ERR"/>
+    </root>
+</configuration>
