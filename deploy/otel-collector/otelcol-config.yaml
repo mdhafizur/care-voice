@@ -1,0 +1,111 @@
+# OpenTelemetry Collector config for grafana/otel-lgtm 0.37.0 (otelcol-contrib v0.162.0), replacing the image's
+# /otel-lgtm/otelcol-config.yaml. Identical to the image's default except for one processor in the traces pipeline:
+#
+#   transform/json-logs (logs pipeline) rewrites each CareVoice log record's body from the bare message into one
+#   JSON object: message, level, logger, service and every structured field (requestId, userId, type, reason,
+#   durationMs, ...). Grafana then shows the same JSON the containers print to stdout, `| json` works in LogQL and the
+#   logs panel can prettify it. The fields also stay Loki structured metadata, so existing queries keep working.
+#   error_mode: ignore: a statement that fails leaves that record's body unchanged instead of dropping the record.
+#
+#   tail_sampling/drop-probes drops every trace that contains a span with url.path /livez, /readyz or /metrics.
+#   Kubernetes probes every few seconds and Prometheus scrapes /metrics every 15 s, so without it most traces in
+#   Tempo are probes. Tail sampling decides per whole TRACE, so the child spans of a probe (the database and Redis
+#   pings of /readyz) go with it instead of staying behind as orphans. Metrics are untouched: the dashboard's health
+#   panels are built from http_server_request_duration_seconds{http_route="/readyz"}.
+#
+# Keep in sync with https://github.com/grafana/docker-otel-lgtm/blob/v0.37.0/docker/otelcol-config.yaml when the
+# image is upgraded.
+receivers:
+  otlp:
+    protocols:
+      grpc:
+        endpoint: 0.0.0.0:4317
+      http:
+        endpoint: 0.0.0.0:4318
+        cors:
+          allowed_origins:
+            - http://*
+  prometheus/collector:
+    config:
+      scrape_configs:
+        - job_name: "opentelemetry-collector"
+          scrape_interval: 1s
+          static_configs:
+            - targets: ["127.0.0.1:8888"]
+
+extensions:
+  health_check:
+    endpoint: 0.0.0.0:13133
+    path: "/ready"
+
+processors:
+  batch:
+  transform/json-logs:
+    error_mode: ignore
+    log_statements:
+      - context: log
+        conditions:
+          - resource.attributes["service.namespace"] == "carevoice"
+        statements:
+          # Build the object in the per-record cache: the structured fields first, then the standard ones.
+          - set(cache["record"], attributes)
+          - set(cache["record"]["message"], body)
+          - set(cache["record"]["level"], severity_text)
+          - set(cache["record"]["logger"], instrumentation_scope.name)
+          - set(cache["record"]["service"], resource.attributes["service.name"])
+          # stringify_all turns the nested map into its JSON string.
+          - stringify_all(cache)
+          - set(body, cache["record"])
+  tail_sampling/drop-probes:
+    # Spans of one trace arrive within milliseconds here; 5 s also covers a slow /readyz (timeouts are 2 s).
+    decision_wait: 5s
+    policies:
+      # A matching drop policy wins over every other policy.
+      - name: drop-probes
+        type: drop
+        drop:
+          drop_sub_policy:
+            - name: probe-paths
+              type: string_attribute
+              string_attribute:
+                key: url.path
+                values: ["/livez", "/readyz", "/metrics"]
+      - name: keep-everything-else
+        type: always_sample
+
+exporters:
+  otlp_http/metrics:
+    endpoint: http://127.0.0.1:9090/api/v1/otlp
+    tls:
+      insecure: true
+  otlp_http/traces:
+    endpoint: http://127.0.0.1:4418
+    tls:
+      insecure: true
+  otlp_http/logs:
+    endpoint: http://127.0.0.1:3100/otlp
+    tls:
+      insecure: true
+  otlp_grpc/profiles:
+    endpoint: http://127.0.0.1:4040
+    tls:
+      insecure: true
+
+service:
+  extensions: [health_check]
+  pipelines:
+    traces:
+      receivers: [otlp]
+      processors: [tail_sampling/drop-probes, batch]
+      exporters: [otlp_http/traces]
+    metrics:
+      receivers: [otlp, prometheus/collector]
+      processors: [batch]
+      exporters: [otlp_http/metrics]
+    logs:
+      receivers: [otlp]
+      processors: [transform/json-logs, batch]
+      exporters: [otlp_http/logs]
+    profiles:
+      receivers: [otlp]
+      exporters: [otlp_grpc/profiles]

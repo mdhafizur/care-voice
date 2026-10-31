@@ -1,0 +1,70 @@
+# Links open the browser-facing hostnames; siteMonitor and widgets use the internal compose addresses, because
+# *.nip.io resolves to 127.0.0.1 inside a container. Probe-style checks (/livez etc.) are hidden from traces and
+# access logs (deploy/otel-collector/otelcol-config.yaml), so these checks add no noise in Grafana.
+- APIs:
+    - Documentation service:
+        icon: swagger.png
+        href: http://api.{{HOMEPAGE_VAR_DOMAIN}}:{{HOMEPAGE_VAR_HTTP_PORT}}/docs
+        description: Transcripts, observations, review — Swagger UI (JWT from POST /v1/auth/token)
+        siteMonitor: http://documentation-service:8080/livez
+    - Alert service:
+        icon: swagger.png
+        href: http://alerts.{{HOMEPAGE_VAR_DOMAIN}}:{{HOMEPAGE_VAR_HTTP_PORT}}/docs
+        description: Alerts and RAG guidance for ward leads — Swagger UI
+        siteMonitor: http://alert-service:8081/livez
+
+- Observability:
+    - Grafana:
+        icon: grafana.png
+        href: http://grafana.{{HOMEPAGE_VAR_DOMAIN}}:{{HOMEPAGE_VAR_HTTP_PORT}}
+        description: CareVoice dashboard; Explore for Loki logs, Tempo traces, Prometheus
+        siteMonitor: http://otel-lgtm:3000/api/health
+        widget:
+          type: grafana
+          version: 2
+          url: http://otel-lgtm:3000
+          username: admin
+          password: "{{HOMEPAGE_VAR_GRAFANA_PASSWORD}}"
+          fields: ["dashboards", "datasources", "alertstriggered"]
+    - Prometheus:
+        icon: prometheus.png
+        href: http://grafana.{{HOMEPAGE_VAR_DOMAIN}}:{{HOMEPAGE_VAR_HTTP_PORT}}/explore
+        description: Scrape targets (services' /metrics, RabbitMQ); query it through Grafana Explore
+        widget:
+          type: prometheus
+          url: http://otel-lgtm:9090
+    - Uptime Kuma:
+        icon: uptime-kuma.png
+        href: http://status.{{HOMEPAGE_VAR_DOMAIN}}:{{HOMEPAGE_VAR_HTTP_PORT}}/status/carevoice
+        description: Status page and monitors (start with make monitoring-up)
+        siteMonitor: http://uptime-kuma:3001
+        widget:
+          type: uptimekuma
+          url: http://uptime-kuma:3001
+          slug: carevoice
+
+- Infrastructure:
+    - Traefik:
+        icon: traefik.png
+        href: http://traefik.{{HOMEPAGE_VAR_DOMAIN}}:{{HOMEPAGE_VAR_HTTP_PORT}}/dashboard/
+        description: Reverse proxy — routers, services, middlewares
+        siteMonitor: http://traefik:8080/ping
+        widget:
+          type: traefik
+          url: http://traefik:8090
+    - RabbitMQ:
+        icon: rabbitmq.png
+        href: http://rabbitmq.{{HOMEPAGE_VAR_DOMAIN}}:{{HOMEPAGE_VAR_HTTP_PORT}}
+        description: Management UI — alert queues, retry queue, dead letters (RABBITMQ_USER / RABBITMQ_PASSWORD)
+        siteMonitor: http://rabbitmq:15672
+
+- Databases:
+    - pgAdmin:
+        icon: pgadmin.png
+        href: http://pgadmin.{{HOMEPAGE_VAR_DOMAIN}}:{{HOMEPAGE_VAR_HTTP_PORT}}
+        description: PostgreSQL of documentation-service (start with make admin-up; password = POSTGRES_PASSWORD)
+        siteMonitor: http://pgadmin:80/misc/ping
+    - mongo-express:
+        icon: mongodb.png
+        href: http://mongo.{{HOMEPAGE_VAR_DOMAIN}}:{{HOMEPAGE_VAR_HTTP_PORT}}
+        description: MongoDB of alert-service (start with make admin-up; admin / MONGO_EXPRESS_PASSWORD)

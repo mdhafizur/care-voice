@@ -1,0 +1,61 @@
+# Replaces /otel-lgtm/prometheus.yaml in grafana/otel-lgtm:0.37.0 (mount documented in the otel-lgtm README,
+# "Customize backend configuration"). The first part is a copy of the image's file (OTLP ingestion settings);
+# CareVoice adds scrape_configs. The image already starts Prometheus with --enable-feature=exemplar-storage.
+global:
+  scrape_interval: 15s
+  scrape_native_histograms: true
+otlp:
+  keep_identifying_resource_attributes: true
+  promote_resource_attributes:
+    - service.instance.id
+    - service.name
+    - service.namespace
+    - service.version
+    - cloud.availability_zone
+    - cloud.region
+    - container.name
+    - deployment.environment
+    - deployment.environment.name
+    - k8s.cluster.name
+    - k8s.container.name
+    - k8s.cronjob.name
+    - k8s.daemonset.name
+    - k8s.deployment.name
+    - k8s.job.name
+    - k8s.namespace.name
+    - k8s.node.name
+    - k8s.pod.name
+    - k8s.replicaset.name
+    - k8s.statefulset.name
+    - host.name
+storage:
+  tsdb:
+    out_of_order_time_window: 10m
+
+scrape_configs:
+  # RabbitMQ Prometheus plugin. /metrics/per-object carries per-queue series (queue depth, unacked, consumers);
+  # the default /metrics endpoint is aggregated and has no queue label.
+  - job_name: rabbitmq
+    metrics_path: /metrics/per-object
+    static_configs:
+      - targets: ["rabbitmq:15692"]
+
+  # Micrometer /metrics of every replica (business, outbox, Hikari, Caffeine, Ktor SLO buckets). The OpenTelemetry
+  # agent's Micrometer bridge is disabled by default, so these meters only exist on /metrics. Docker's DNS returns one
+  # A record per replica, so dns_sd finds both. service_name matches the OTLP label for the dashboard's $service.
+  - job_name: documentation-service
+    dns_sd_configs:
+      - names: ["documentation-service"]
+        type: A
+        port: 8080
+    relabel_configs:
+      - target_label: service_name
+        replacement: documentation-service
+  - job_name: alert-service
+    dns_sd_configs:
+      - names: ["alert-service"]
+        type: A
+        port: 8081
+    relabel_configs:
+      - target_label: service_name
+        replacement: alert-service

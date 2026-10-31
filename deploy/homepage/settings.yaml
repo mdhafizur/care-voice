@@ -1,0 +1,25 @@
+# Homepage (gethomepage.dev) start page for the local CareVoice stack: `make tools-up`, then
+# http://home.carevoice.127.0.0.1.nip.io (with CAREVOICE_HTTP_PORT if not 80) or http://localhost:3002.
+# {{HOMEPAGE_VAR_*}} values come from docker-compose.yml (domain, port, Grafana password).
+title: CareVoice
+description: Local CareVoice stack — APIs, observability, infrastructure and database UIs
+theme: dark
+color: slate
+headerStyle: boxed
+statusStyle: dot
+disableUpdateCheck: true
+target: _blank
+
+layout:
+  APIs:
+    style: row
+    columns: 2
+  Observability:
+    style: row
+    columns: 3
+  Infrastructure:
+    style: row
+    columns: 2
+  Databases:
+    style: row
+    columns: 2

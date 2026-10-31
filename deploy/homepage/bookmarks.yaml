@@ -1,0 +1,14 @@
+# Raw endpoints that are handy during a demo.
+- Developer:
+    - documentation-service OpenAPI:
+        - abbr: DO
+          href: http://api.{{HOMEPAGE_VAR_DOMAIN}}:{{HOMEPAGE_VAR_HTTP_PORT}}/openapi.yaml
+    - alert-service OpenAPI:
+        - abbr: AO
+          href: http://alerts.{{HOMEPAGE_VAR_DOMAIN}}:{{HOMEPAGE_VAR_HTTP_PORT}}/openapi.yaml
+    - documentation-service readiness:
+        - abbr: RD
+          href: http://api.{{HOMEPAGE_VAR_DOMAIN}}:{{HOMEPAGE_VAR_HTTP_PORT}}/readyz
+    - Uptime Kuma status page:
+        - abbr: UK
+          href: http://status.{{HOMEPAGE_VAR_DOMAIN}}:{{HOMEPAGE_VAR_HTTP_PORT}}/status/carevoice

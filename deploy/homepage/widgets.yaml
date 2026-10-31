@@ -1,0 +1,10 @@
+# Info widgets in the header.
+- greeting:
+    text_size: xl
+    text: CareVoice · local stack
+- datetime:
+    text_size: md
+    format:
+      dateStyle: medium
+      timeStyle: short
+      hourCycle: h23

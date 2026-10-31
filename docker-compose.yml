@@ -1,0 +1,518 @@
+# CareVoice local stack (CONTRACTS sections 13 and 14).
+#
+#   cp .env.example .env      # once; then fill in real secrets (see the comments in .env.example)
+#   make up                   # docker compose up -d --build
+#
+# Entry points on the host (bound to 127.0.0.1 only):
+#   http://localhost:8080     documentation-service (Traefik, load-balanced over 2 replicas)
+#   http://localhost:8081     alert-service: /docs, /openapi.yaml, /livez and /readyz only (the API is service-to-service)
+#   http://localhost:3000     Grafana (grafana/otel-lgtm)
+#   http://localhost:15672    RabbitMQ management UI
+#   http://localhost:3001     Uptime Kuma (only with `make monitoring-up`, profile "monitoring")
+# Postgres, Mongo, Redis and RabbitMQ (AMQP) are also published on 127.0.0.1 for local tools and `make run-*`.
+#
+# Startup order: databases healthy -> mongo-init (replica set) -> one-shot migrate containers -> services.
+# The services run with *_MIGRATE_ON_STARTUP=false, so two replicas never race on migrations at startup.
+
+name: carevoice
+
+# One build definition per service, shared by the service and its migrate one-shot (same image, same tag).
+x-documentation-build: &documentation-build
+  context: .
+  dockerfile: documentation-service/Dockerfile
+  args:
+    # app-from-gradle (default) compiles inside Docker; `make up-fast` sets app-from-host
+    APP_SOURCE: ${APP_SOURCE:-app-from-gradle}
+
+x-alert-build: &alert-build
+  context: .
+  dockerfile: alert-service/Dockerfile
+  args:
+    # app-from-gradle (default) compiles inside Docker; `make up-fast` sets app-from-host
+    APP_SOURCE: ${APP_SOURCE:-app-from-gradle}
+
+# Connection settings assembled from the credentials in .env, so each password lives in exactly one place.
+x-documentation-env: &documentation-env
+  HTTP_PORT: "8080"
+  DATABASE_URL: jdbc:postgresql://postgres:5432/${POSTGRES_DB:-carevoice}
+  DATABASE_USER: ${POSTGRES_USER:-carevoice}
+  DATABASE_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
+  DATABASE_MIGRATE_ON_STARTUP: "false"
+  REDIS_URL: redis://redis:6379
+  RABBITMQ_URL: amqp://${RABBITMQ_USER:-carevoice}:${RABBITMQ_PASSWORD:?set RABBITMQ_PASSWORD in .env}@rabbitmq:5672/${RABBITMQ_VHOST:-carevoice}
+  ALERT_SERVICE_URL: http://alert-service:8081
+  # Application log level (com.carevoice.*); libraries keep INFO/WARN. DEBUG locally, INFO in Kubernetes.
+  LOG_LEVEL: ${LOG_LEVEL:-DEBUG}
+  OTEL_SERVICE_NAME: documentation-service
+  OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-lgtm:4318
+
+x-alert-env: &alert-env
+  HTTP_PORT: "8081"
+  # replicaSet=rs0: the driver discovers the primary and follows it on failover (CONTRACTS section 14).
+  MONGO_URI: mongodb://mongo:27017/?replicaSet=rs0
+  MONGO_DATABASE: ${MONGO_DATABASE:-carevoice_alerts}
+  MONGO_MIGRATE_ON_STARTUP: "false"
+  RABBITMQ_URL: amqp://${RABBITMQ_USER:-carevoice}:${RABBITMQ_PASSWORD:?set RABBITMQ_PASSWORD in .env}@rabbitmq:5672/${RABBITMQ_VHOST:-carevoice}
+  # Application log level (com.carevoice.*); libraries keep INFO/WARN. DEBUG locally, INFO in Kubernetes.
+  LOG_LEVEL: ${LOG_LEVEL:-DEBUG}
+  OTEL_SERVICE_NAME: alert-service
+  OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-lgtm:4318
+
+services:
+  # -------------------------------------------------------------------------------------------------------------------
+  # Infrastructure
+  # -------------------------------------------------------------------------------------------------------------------
+  postgres:
+    image: postgres:17-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-carevoice}
+      POSTGRES_USER: ${POSTGRES_USER:-carevoice}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    ports:
+      - "127.0.0.1:5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U \"$${POSTGRES_USER}\" -d \"$${POSTGRES_DB}\""]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+      start_period: 10s
+
+  mongo:
+    image: mongo:8.0
+    restart: unless-stopped
+    # Single-member replica set rs0: transactions, majority write/read concerns and change streams need a replica
+    # set, and the code is written for one (CONTRACTS section 14). The cache size is capped for a laptop.
+    command: ["mongod", "--replSet", "rs0", "--bind_ip_all", "--wiredTigerCacheSizeGB", "0.25"]
+    volumes:
+      - mongo-data:/data/db
+      - mongo-config:/data/configdb
+    ports:
+      - "127.0.0.1:27017:27017"
+    healthcheck:
+      test: ["CMD", "mongosh", "--quiet", "--eval", "quit(db.adminCommand('ping').ok === 1 ? 0 : 1)"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+      start_period: 15s
+
+  # One-shot: initiates rs0 if it is not initiated yet (idempotent, safe on every `up`), then waits for a primary.
+  # The member host is `mongo:27017`, which is what clients inside the compose network resolve.
+  mongo-init:
+    image: mongo:8.0
+    restart: "no"
+    depends_on:
+      mongo:
+        condition: service_healthy
+    entrypoint:
+      - mongosh
+      - --host
+      - mongo:27017
+      - --quiet
+      - --eval
+      - |
+        try {
+          rs.status();
+          print('replica set rs0 already initiated');
+        } catch (e) {
+          if (e.codeName !== 'NotYetInitialized' && e.code !== 94) { throw e; }
+          rs.initiate({ _id: 'rs0', members: [{ _id: 0, host: 'mongo:27017' }] });
+          print('replica set rs0 initiated');
+        }
+        let waited = 0;
+        while (!db.hello().isWritablePrimary) {
+          if (++waited > 60) { throw new Error('rs0 has no primary after 60 s'); }
+          sleep(1000);
+        }
+        print('rs0 primary is ready');
+
+  redis:
+    image: redis:7.4-alpine
+    restart: unless-stopped
+    # Pure cache / counters / pub-sub (CONTRACTS section 9a): no RDB snapshots, no AOF. Bounded memory with LRU
+    # eviction across all keys, so Redis can never grow until the container is OOM-killed.
+    command:
+      - redis-server
+      - --save
+      - ""
+      - --appendonly
+      - "no"
+      - --maxmemory
+      - 128mb
+      - --maxmemory-policy
+      - allkeys-lru
+    ports:
+      - "127.0.0.1:6379:6379"
+    healthcheck:
+      test: ["CMD-SHELL", "redis-cli ping | grep -q PONG"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+
+  rabbitmq:
+    image: rabbitmq:4.1-management-alpine
+    restart: unless-stopped
+    hostname: rabbitmq # the node name (rabbit@<hostname>) and with it the data directory must stay stable
+    environment:
+      RABBITMQ_DEFAULT_USER: ${RABBITMQ_USER:-carevoice}
+      RABBITMQ_DEFAULT_PASS: ${RABBITMQ_PASSWORD:?set RABBITMQ_PASSWORD in .env}
+      RABBITMQ_DEFAULT_VHOST: ${RABBITMQ_VHOST:-carevoice}
+    # The rabbitmq_prometheus plugin (port 15692) is already enabled in the official image, and the management
+    # variant adds rabbitmq_management (15672). No enabled_plugins file needed.
+    volumes:
+      - rabbitmq-data:/var/lib/rabbitmq
+    ports:
+      - "127.0.0.1:5672:5672"
+      - "127.0.0.1:15672:15672" # management UI
+      - "127.0.0.1:15692:15692" # Prometheus metrics: /metrics (aggregated), /metrics/per-object
+    labels:
+      - traefik.enable=true
+      - traefik.http.routers.rabbitmq.entrypoints=http
+      - traefik.http.routers.rabbitmq.rule=Host(`rabbitmq.${CAREVOICE_DOMAIN:-carevoice.127.0.0.1.nip.io}`)
+      - traefik.http.routers.rabbitmq.service=rabbitmq
+      - traefik.http.services.rabbitmq.loadbalancer.server.port=15672
+    healthcheck:
+      # Listeners accept connections = the node has booted and is ready for clients.
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "check_port_connectivity"]
+      interval: 10s
+      timeout: 10s
+      retries: 12
+      start_period: 20s
+
+  otel-lgtm:
+    image: grafana/otel-lgtm:0.37.0
+    restart: unless-stopped
+    # OTLP receiver -> Prometheus (metrics), Tempo (traces), Loki (logs), Grafana on top. The image has its own
+    # HEALTHCHECK. Data persists in /data.
+    # deploy/grafana: CareVoice dashboard + provider, and datasources (same uids as the image) with exemplar -> Tempo
+    # and Tempo <-> Loki links. deploy/prometheus/prometheus.yaml replaces the image's Prometheus config to add scrape
+    # targets: RabbitMQ :15692 and the services' Micrometer /metrics (paths from the otel-lgtm README).
+    volumes:
+      - otel-lgtm-data:/data
+      - ./deploy/grafana/dashboards:/otel-lgtm/grafana/conf/provisioning/dashboards/carevoice:ro
+      - ./deploy/grafana/provisioning/dashboards/carevoice.yaml:/otel-lgtm/grafana/conf/provisioning/dashboards/carevoice.yaml:ro
+      - ./deploy/grafana/provisioning/datasources/grafana-datasources.yaml:/otel-lgtm/grafana/conf/provisioning/datasources/grafana-datasources.yaml:ro
+      - ./deploy/prometheus/prometheus.yaml:/otel-lgtm/prometheus.yaml:ro
+      # Collector config: the image's default plus dropping probe traces (/livez, /readyz, /metrics) before Tempo.
+      - ./deploy/otel-collector/otelcol-config.yaml:/otel-lgtm/otelcol-config.yaml:ro
+    ports:
+      - "127.0.0.1:3000:3000" # Grafana
+      - "127.0.0.1:4317:4317" # OTLP gRPC
+      - "127.0.0.1:4318:4318" # OTLP HTTP
+    labels:
+      - traefik.enable=true
+      - traefik.http.routers.grafana.entrypoints=http
+      - traefik.http.routers.grafana.rule=Host(`grafana.${CAREVOICE_DOMAIN:-carevoice.127.0.0.1.nip.io}`)
+      - traefik.http.routers.grafana.service=grafana
+      - traefik.http.services.grafana.loadbalancer.server.port=3000
+
+  # -------------------------------------------------------------------------------------------------------------------
+  # Reverse proxy / load balancer
+  # -------------------------------------------------------------------------------------------------------------------
+  traefik:
+    image: traefik:v3.7.14
+    restart: unless-stopped
+    command:
+      - --providers.docker=true
+      - --providers.docker.exposedbydefault=false # only containers with traefik.enable=true are routed
+      - --providers.docker.network=carevoice
+      - --entrypoints.web.address=:8080 # documentation-service
+      - --entrypoints.alert.address=:8081 # alert-service (alerts API, docs, health)
+      # Host-based routing on port 80: api./alerts./grafana./status.<CAREVOICE_DOMAIN>. The default domain uses nip.io,
+      # public DNS that resolves *.127.0.0.1.nip.io to 127.0.0.1, so no /etc/hosts entries are needed.
+      - --entrypoints.http.address=:80
+      - --ping=true
+      - --ping.entrypoint=web
+      # Dashboard + API through routers below (no --api.insecure): the browser uses traefik.<CAREVOICE_DOMAIN>,
+      # Homepage's Traefik widget the internal entrypoint traefik-api (:8090, not published to the host).
+      - --api=true
+      - --api.dashboard=true
+      - --entrypoints.traefik-api.address=:8090
+      - --log.level=INFO
+      - --accesslog=false # the services write their own access log lines
+    ports:
+      # 127.0.0.1 only; drop the prefix to reach the API from a phone on the same network.
+      - "127.0.0.1:8080:8080"
+      - "127.0.0.1:8081:8081"
+      # Host-name routing (api./alerts./grafana./status.<CAREVOICE_DOMAIN>). Set CAREVOICE_HTTP_PORT in .env when port 80
+      # is taken on this machine, e.g. 8000 -> http://api.carevoice.127.0.0.1.nip.io:8000
+      - "127.0.0.1:${CAREVOICE_HTTP_PORT:-80}:80"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    labels:
+      - traefik.enable=true
+      - traefik.http.routers.traefik-dashboard.entrypoints=http
+      - traefik.http.routers.traefik-dashboard.rule=Host(`traefik.${CAREVOICE_DOMAIN:-carevoice.127.0.0.1.nip.io}`)
+      - traefik.http.routers.traefik-dashboard.service=api@internal
+      - traefik.http.routers.traefik-api.entrypoints=traefik-api
+      - traefik.http.routers.traefik-api.rule=PathPrefix(`/api`) || PathPrefix(`/dashboard`)
+      - traefik.http.routers.traefik-api.service=api@internal
+    healthcheck:
+      # `traefik healthcheck` needs the same ping/entrypoint settings as the server to find the ping endpoint.
+      test: ["CMD", "traefik", "healthcheck", "--ping=true", "--ping.entrypoint=web", "--entrypoints.web.address=:8080"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+
+  # -------------------------------------------------------------------------------------------------------------------
+  # One-shot migrations (same image as the service, argument `migrate`, exits when done)
+  # -------------------------------------------------------------------------------------------------------------------
+  documentation-migrate:
+    build: *documentation-build
+    image: carevoice/documentation-service:local
+    command: ["migrate"]
+    restart: "no"
+    env_file: .env
+    environment:
+      <<: *documentation-env
+      OTEL_SERVICE_NAME: documentation-service-migrate
+    depends_on:
+      postgres:
+        condition: service_healthy
+    deploy:
+      resources:
+        limits:
+          memory: 384M
+
+  alert-migrate:
+    build: *alert-build
+    image: carevoice/alert-service:local
+    command: ["migrate"]
+    restart: "no"
+    env_file: .env
+    environment:
+      <<: *alert-env
+      OTEL_SERVICE_NAME: alert-service-migrate
+    depends_on:
+      mongo-init:
+        condition: service_completed_successfully
+    deploy:
+      resources:
+        limits:
+          memory: 384M
+
+  # -------------------------------------------------------------------------------------------------------------------
+  # Services (2 replicas each, no host ports: reached through Traefik or the compose DNS name)
+  # -------------------------------------------------------------------------------------------------------------------
+  documentation-service:
+    build: *documentation-build
+    image: carevoice/documentation-service:local
+    restart: unless-stopped
+    env_file: .env
+    environment: *documentation-env
+    depends_on:
+      documentation-migrate:
+        condition: service_completed_successfully
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+      otel-lgtm:
+        condition: service_started
+    # The image has no curl; bash's /dev/tcp makes a minimal HTTP request to the readiness endpoint.
+    healthcheck:
+      test: ["CMD", "bash", "-c", 'exec 3<>/dev/tcp/127.0.0.1/8080 && printf "GET /readyz HTTP/1.0\r\nHost: localhost\r\n\r\n" >&3 && head -n1 <&3 | grep -q " 200 "']
+      interval: 10s
+      timeout: 3s
+      retries: 3
+      start_period: 60s
+    # Graceful shutdown (CONTRACTS 9b): readiness flips, 10 s drain, then SSE/relay/pools close. Default is 10 s.
+    stop_grace_period: 30s
+    deploy:
+      replicas: 2
+      resources:
+        limits:
+          memory: 768M # heap = 75 % of this (MaxRAMPercentage)
+    labels:
+      - traefik.enable=true
+      - traefik.http.routers.documentation.entrypoints=web
+      - traefik.http.routers.documentation.rule=PathPrefix(`/`)
+      - traefik.http.routers.documentation.service=documentation
+      - traefik.http.routers.documentation-host.entrypoints=http
+      - traefik.http.routers.documentation-host.rule=Host(`api.${CAREVOICE_DOMAIN:-carevoice.127.0.0.1.nip.io}`)
+      - traefik.http.routers.documentation-host.service=documentation
+      - traefik.http.services.documentation.loadbalancer.server.port=8080
+      # Traefik's own health check takes a replica out of rotation as soon as /readyz returns 503
+      # (e.g. while it drains on SIGTERM).
+      - traefik.http.services.documentation.loadbalancer.healthcheck.path=/readyz
+      - traefik.http.services.documentation.loadbalancer.healthcheck.interval=5s
+      - traefik.http.services.documentation.loadbalancer.healthcheck.timeout=2s
+
+  alert-service:
+    build: *alert-build
+    image: carevoice/alert-service:local
+    restart: unless-stopped
+    env_file: .env
+    environment: *alert-env
+    depends_on:
+      alert-migrate:
+        condition: service_completed_successfully
+      mongo-init:
+        condition: service_completed_successfully
+      rabbitmq:
+        condition: service_healthy
+      otel-lgtm:
+        condition: service_started
+    healthcheck:
+      test: ["CMD", "bash", "-c", 'exec 3<>/dev/tcp/127.0.0.1/8081 && printf "GET /readyz HTTP/1.0\r\nHost: localhost\r\n\r\n" >&3 && head -n1 <&3 | grep -q " 200 "']
+      interval: 10s
+      timeout: 3s
+      retries: 3
+      start_period: 60s
+    stop_grace_period: 30s
+    deploy:
+      replicas: 2
+      resources:
+        limits:
+          memory: 512M
+    labels:
+      - traefik.enable=true
+      - traefik.http.routers.alert.entrypoints=alert
+      # Public: the ward lead's alert API, docs and health. The event intake (/v1/events/*) stays internal: only
+      # documentation-service calls it, over the compose network.
+      - traefik.http.routers.alert.rule=PathPrefix(`/v1/alerts`) || PathPrefix(`/docs`) || Path(`/openapi.yaml`) || Path(`/livez`) || Path(`/readyz`)
+      - traefik.http.routers.alert.service=alert
+      - traefik.http.routers.alert-host.entrypoints=http
+      - traefik.http.routers.alert-host.rule=Host(`alerts.${CAREVOICE_DOMAIN:-carevoice.127.0.0.1.nip.io}`) && (PathPrefix(`/v1/alerts`) || PathPrefix(`/docs`) || Path(`/openapi.yaml`) || Path(`/livez`) || Path(`/readyz`))
+      - traefik.http.routers.alert-host.service=alert
+      - traefik.http.services.alert.loadbalancer.server.port=8081
+      - traefik.http.services.alert.loadbalancer.healthcheck.path=/readyz
+      - traefik.http.services.alert.loadbalancer.healthcheck.interval=5s
+      - traefik.http.services.alert.loadbalancer.healthcheck.timeout=2s
+
+  # -------------------------------------------------------------------------------------------------------------------
+  # Profile "monitoring": status page (make monitoring-up)
+  # -------------------------------------------------------------------------------------------------------------------
+  # Uptime Kuma 1.23 (not 2.x): 1.23 is what the automation client (uptime-kuma-api) supports, so the monitors and the
+  # status page are created as code by uptime-kuma-setup instead of by hand. Separate volume from the earlier 2.x data
+  # (2.x migrates its database; 1.23 cannot read it).
+  uptime-kuma:
+    image: louislam/uptime-kuma:1.23.16
+    profiles: ["monitoring"]
+    restart: unless-stopped
+    volumes:
+      - uptime-kuma-v1-data:/app/data
+    ports:
+      - "127.0.0.1:3001:3001"
+    labels:
+      - traefik.enable=true
+      - traefik.http.routers.status.entrypoints=http
+      - traefik.http.routers.status.rule=Host(`status.${CAREVOICE_DOMAIN:-carevoice.127.0.0.1.nip.io}`)
+      - traefik.http.routers.status.service=status
+      - traefik.http.services.status.loadbalancer.server.port=3001
+
+  # One-shot: admin account, monitors and the "CareVoice Status" page (deploy/uptime-kuma/setup.py). Idempotent.
+  uptime-kuma-setup:
+    image: python:3.12-slim
+    profiles: ["monitoring"]
+    restart: "no"
+    depends_on:
+      uptime-kuma:
+        condition: service_started
+    environment:
+      KUMA_URL: http://uptime-kuma:3001
+      KUMA_USERNAME: ${KUMA_USERNAME:-admin}
+      KUMA_PASSWORD: ${KUMA_PASSWORD:-carevoice-admin-1}
+      CAREVOICE_DOMAIN: ${CAREVOICE_DOMAIN:-carevoice.127.0.0.1.nip.io}
+    volumes:
+      - ./deploy/uptime-kuma/setup.py:/setup.py:ro
+    entrypoint: ["sh", "-c", "pip install --quiet --disable-pip-version-check --root-user-action=ignore uptime-kuma-api==1.2.1 && python /setup.py"]
+
+  # -------------------------------------------------------------------------------------------------------------------
+  # Profile "admin": database UIs (make admin-up). Local use only: bound to 127.0.0.1 and the local domain.
+  # -------------------------------------------------------------------------------------------------------------------
+  # pgAdmin in desktop mode (no pgAdmin login); the CareVoice server is pre-registered from deploy/pgadmin/servers.json,
+  # the first connect asks for POSTGRES_PASSWORD. Resident names and transcripts show as AES-GCM ciphertext by design.
+  pgadmin:
+    image: dpage/pgadmin4:9.5
+    profiles: ["admin"]
+    restart: unless-stopped
+    environment:
+      PGADMIN_DEFAULT_EMAIL: admin@carevoice.dev
+      PGADMIN_DEFAULT_PASSWORD: ${PGADMIN_PASSWORD:-carevoice-admin-1}
+      PGADMIN_CONFIG_SERVER_MODE: "False"
+      PGADMIN_CONFIG_MASTER_PASSWORD_REQUIRED: "False"
+    volumes:
+      - pgadmin-data:/var/lib/pgadmin
+      - ./deploy/pgadmin/servers.json:/pgadmin4/servers.json:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+    ports:
+      - "127.0.0.1:5050:80"
+    labels:
+      - traefik.enable=true
+      - traefik.http.routers.pgadmin.entrypoints=http
+      - traefik.http.routers.pgadmin.rule=Host(`pgadmin.${CAREVOICE_DOMAIN:-carevoice.127.0.0.1.nip.io}`)
+      - traefik.http.routers.pgadmin.service=pgadmin
+      - traefik.http.services.pgadmin.loadbalancer.server.port=80
+
+  # mongo-express for the alert-service database (carevoice_alerts). directConnection: talk to the single rs0 member.
+  mongo-express:
+    image: mongo-express:1.0.2-20-alpine3.19
+    profiles: ["admin"]
+    restart: unless-stopped
+    environment:
+      ME_CONFIG_MONGODB_URL: mongodb://mongo:27017/?directConnection=true
+      ME_CONFIG_BASICAUTH_USERNAME: admin
+      ME_CONFIG_BASICAUTH_PASSWORD: ${MONGO_EXPRESS_PASSWORD:-carevoice-admin-1}
+    depends_on:
+      mongo-init:
+        condition: service_completed_successfully
+    ports:
+      - "127.0.0.1:8082:8081"
+    labels:
+      - traefik.enable=true
+      - traefik.http.routers.mongo-express.entrypoints=http
+      - traefik.http.routers.mongo-express.rule=Host(`mongo.${CAREVOICE_DOMAIN:-carevoice.127.0.0.1.nip.io}`)
+      - traefik.http.routers.mongo-express.service=mongo-express
+      - traefik.http.services.mongo-express.loadbalancer.server.port=8081
+
+  # -------------------------------------------------------------------------------------------------------------------
+  # Profile "tools": Homepage, one start page for every UI of the stack (make tools-up). Config: deploy/homepage.
+  # No Docker socket: status dots come from HTTP checks (siteMonitor) against the internal compose addresses.
+  # -------------------------------------------------------------------------------------------------------------------
+  homepage:
+    image: ghcr.io/gethomepage/homepage:v2.2.0
+    profiles: ["tools"]
+    restart: unless-stopped
+    environment:
+      # Host headers Homepage accepts (required since v1): the Traefik hostname with and without the port, and the
+      # direct port.
+      HOMEPAGE_ALLOWED_HOSTS: home.${CAREVOICE_DOMAIN:-carevoice.127.0.0.1.nip.io},home.${CAREVOICE_DOMAIN:-carevoice.127.0.0.1.nip.io}:${CAREVOICE_HTTP_PORT:-80},localhost:3002,127.0.0.1:3002
+      HOMEPAGE_VAR_DOMAIN: ${CAREVOICE_DOMAIN:-carevoice.127.0.0.1.nip.io}
+      HOMEPAGE_VAR_HTTP_PORT: ${CAREVOICE_HTTP_PORT:-80}
+      # otel-lgtm's Grafana admin (admin/admin unless changed in Grafana); used by the Grafana widget only.
+      HOMEPAGE_VAR_GRAFANA_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:-admin}
+      LOG_TARGETS: stdout
+    volumes:
+      - ./deploy/homepage:/app/config
+    ports:
+      - "127.0.0.1:3002:3000"
+    labels:
+      - traefik.enable=true
+      - traefik.http.routers.homepage.entrypoints=http
+      - traefik.http.routers.homepage.rule=Host(`home.${CAREVOICE_DOMAIN:-carevoice.127.0.0.1.nip.io}`)
+      - traefik.http.routers.homepage.service=homepage
+      - traefik.http.services.homepage.loadbalancer.server.port=3000
+
+networks:
+  default:
+    name: carevoice
+
+volumes:
+  postgres-data:
+  mongo-data:
+  mongo-config:
+  rabbitmq-data:
+  otel-lgtm-data:
+  uptime-kuma-v1-data:
+  pgadmin-data:

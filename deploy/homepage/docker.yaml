@@ -1,0 +1,2 @@
+# No Docker integration: the socket is not mounted (status comes from siteMonitor HTTP checks).
+{}
