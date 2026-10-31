@@ -1,0 +1,146 @@
+# CareVoice CI: build + tests (Testcontainers), reports, SBOMs, container images, image scan, dependency review.
+#
+# Third-party actions are pinned to full commit SHAs (tags can be moved: see the March 2026 trivy-action
+# compromise, https://www.aquasec.com/blog/trivy-supply-chain-attack-what-you-need-to-know). The comment after each
+# SHA names the release it was taken from; Dependabot/Renovate can keep both in sync.
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  build:
+    name: Build and test
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Set up JDK 21
+        uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad # v6.1.0
+        with:
+          distribution: temurin
+          java-version: "21"
+
+      # Gradle wrapper validation, dependency and build cache (written on main only, read on PRs).
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@3f5f9adaf7d9fecd50b5935e54106014257a94e6 # v6.4.0
+        with:
+          cache-read-only: ${{ github.ref != 'refs/heads/main' }}
+
+      # compile, tests, spotlessCheck, koverVerify (CONTRACTS section 3). Testcontainers use the runner's Docker.
+      - name: Build
+        env:
+          CAREVOICE_TEST_DB: containers
+        run: ./gradlew build --continue
+
+      - name: Coverage report (XML + HTML)
+        if: ${{ !cancelled() }}
+        run: ./gradlew koverXmlReport koverHtmlReport
+
+      - name: CycloneDX SBOMs
+        run: ./gradlew :documentation-service:cyclonedxDirectBom :alert-service:cyclonedxDirectBom
+
+      - name: Upload test reports
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: test-reports
+          path: |
+            **/build/test-results/test/
+            **/build/reports/tests/
+          if-no-files-found: warn
+          retention-days: 14
+
+      - name: Upload coverage reports
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: coverage-reports
+          path: "**/build/reports/kover/"
+          if-no-files-found: warn
+          retention-days: 14
+
+      - name: Upload SBOMs
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: sbom
+          path: |
+            documentation-service/build/reports/cyclonedx-direct/
+            alert-service/build/reports/cyclonedx-direct/
+            documentation-service/build/reports/*.json
+            alert-service/build/reports/*.json
+          if-no-files-found: warn
+
+      - name: Upload pact files
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: pacts
+          path: pacts/
+          if-no-files-found: ignore
+
+  images:
+    name: Image ${{ matrix.service }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    needs: build
+    strategy:
+      fail-fast: false
+      matrix:
+        service: [documentation-service, alert-service]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+
+      # Build context = repository root (CONTRACTS section 14); layers cached in the GitHub Actions cache per service.
+      # load: true puts the image into the local Docker engine for the scan; nothing is pushed.
+      - name: Build image
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: .
+          file: ${{ matrix.service }}/Dockerfile
+          tags: carevoice/${{ matrix.service }}:${{ github.sha }}
+          load: true
+          push: false
+          cache-from: type=gha,scope=${{ matrix.service }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.service }}
+
+      - name: Image size
+        run: docker image ls carevoice/${{ matrix.service }}:${{ github.sha }} --format '{{.Repository}}:{{.Tag}} {{.Size}}' | tee -a "$GITHUB_STEP_SUMMARY"
+
+      # Fails the job on CRITICAL vulnerabilities that have a fix available.
+      - name: Trivy image scan
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          image-ref: carevoice/${{ matrix.service }}:${{ github.sha }}
+          severity: CRITICAL
+          ignore-unfixed: true
+          exit-code: "1"
+          format: table
+
+  dependency-review:
+    name: Dependency review
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/dependency-review-action@a1d282b36b6f3519aa1f3fc636f609c47dddb294 # v5.0.0
+        with:
+          fail-on-severity: high
+          comment-summary-in-pr: on-failure
