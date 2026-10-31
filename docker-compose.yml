@@ -65,6 +65,21 @@ services:
   postgres:
     image: postgres:17-alpine
     restart: unless-stopped
+    # Query logging (visible in Grafana via Alloy: {source="docker", service_name="postgres"}):
+    # - every statement slower than 500 ms (the slow-query threshold), always on;
+    # - POSTGRES_LOG_STATEMENT=mod in .env logs every INSERT/UPDATE/DELETE while debugging (default none: traces in
+    #   Tempo already show every statement, without values);
+    # - parameter values are never logged, not even on errors: they hold vital values next to resident ids.
+    command:
+      - postgres
+      - -c
+      - log_min_duration_statement=500
+      - -c
+      - log_statement=${POSTGRES_LOG_STATEMENT:-none}
+      - -c
+      - log_parameter_max_length=0
+      - -c
+      - log_parameter_max_length_on_error=0
     environment:
       POSTGRES_DB: ${POSTGRES_DB:-carevoice}
       POSTGRES_USER: ${POSTGRES_USER:-carevoice}
