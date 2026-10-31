@@ -1,0 +1,984 @@
+openapi: 3.1.0
+info:
+  title: CareVoice alert-service API
+  version: 1.0.0
+  description: |
+    Evaluates alert rules against recorded vital-sign observations and lets ward leads review and acknowledge the
+    resulting alerts.
+
+    * Observations arrive as `ObservationRecordedEvent`s, either through RabbitMQ (default transport) or through
+      `POST /v1/events/observations` (HTTP transport). Both paths share one idempotent use case keyed on `eventId`.
+    * Every request gets an `X-Request-Id` (a valid incoming value is kept, otherwise one is generated) that is echoed
+      in the response and in every problem body.
+    * Errors are RFC 9457 `application/problem+json`. 5xx bodies never contain exception details.
+    * Data is scoped to the caller's tenant and ward. A resource in another ward is answered with 404, not 403.
+  contact:
+    name: CareVoice team
+  license:
+    name: Proprietary
+servers:
+  - url: http://localhost:8081
+    description: Local development
+tags:
+  - name: Events
+    description: Inbound domain events (service-to-service)
+  - name: Alerts
+    description: Alerts for ward leads
+  - name: Operations
+    description: Health checks and metrics (no authentication)
+security:
+  - bearerAuth: []
+
+paths:
+  /v1/events/observations:
+    post:
+      tags: [Events]
+      operationId: receiveObservationRecordedEvent
+      summary: Receive an observation recorded event
+      description: |
+        Evaluates the alert rules for one observation and stores the resulting alerts. Delivery is at-least-once, so
+        the call is idempotent on `eventId`: the first delivery answers 202, every later delivery of the same
+        `eventId` answers 200 with the stored result and creates nothing. Requires the `SERVICE` role.
+        When the instance is saturated the call is rejected with 503 + `Retry-After: 1`; the caller retries.
+      parameters:
+        - name: Idempotency-Key
+          in: header
+          required: false
+          description: Sent by the outbox relay, equal to `eventId`. Informational; `eventId` is the idempotency key.
+          schema:
+            type: string
+            maxLength: 64
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ObservationRecordedEvent'
+            examples:
+              hypertensiveCrisis:
+                summary: Blood pressure that triggers HYPERTENSIVE_CRISIS
+                value:
+                  eventId: 6f1c2a7e-3b7d-4f7a-9a0e-2d4c1b8e9f10
+                  schemaVersion: 1
+                  occurredAt: '2026-10-25T10:00:00Z'
+                  tenantId: sunrise-care
+                  wardId: ward-a
+                  residentId: res-1
+                  observationId: 0b9a3c55-8c41-4e8e-a0f5-5e3f2f6f9d21
+                  vital:
+                    type: BLOOD_PRESSURE
+                    systolic: 185
+                    diastolic: 95
+                  source: RULES
+                  status: CONFIRMED
+      responses:
+        '202':
+          description: First delivery; the event was processed.
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/XRequestId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/EventAccepted'
+              example:
+                eventId: 6f1c2a7e-3b7d-4f7a-9a0e-2d4c1b8e9f10
+                alertsCreated: 1
+        '200':
+          description: Duplicate delivery; the stored result of the first delivery, nothing new was created.
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/XRequestId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/EventAccepted'
+              example:
+                eventId: 6f1c2a7e-3b7d-4f7a-9a0e-2d4c1b8e9f10
+                alertsCreated: 1
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
+        '415':
+          $ref: '#/components/responses/UnsupportedMediaType'
+        '422':
+          $ref: '#/components/responses/UnprocessableEntity'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+
+  /v1/alerts:
+    get:
+      tags: [Alerts]
+      operationId: listAlerts
+      summary: List the alerts of the caller's ward
+      description: |
+        Newest first (`createdAt` descending, then `id` descending), keyset-paginated. Requires the `WARD_LEAD` role.
+        The `Link` header carries `first`, `next` (when there are more items) and `prev` (when not on the first page).
+        A well-formed cursor that points to an unknown alert returns the first page.
+      parameters:
+        - name: status
+          in: query
+          required: false
+          schema:
+            $ref: '#/components/schemas/AlertStatus'
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+            default: 20
+        - name: cursor
+          in: query
+          required: false
+          description: Opaque cursor taken from a `Link` header or `nextCursor`.
+          schema:
+            type: string
+            maxLength: 512
+        - $ref: '#/components/parameters/IfNoneMatch'
+      responses:
+        '200':
+          description: One page of alerts.
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/XRequestId'
+            X-Total-Count:
+              description: Number of alerts matching the filter across all pages.
+              schema:
+                type: integer
+                minimum: 0
+            Link:
+              description: RFC 8288 links with relations `first`, `next` and `prev`.
+              schema:
+                type: string
+              example: '</v1/alerts?limit=20>; rel="first", </v1/alerts?limit=20&cursor=YXwyMDI2LTEwLTI1VDEwOjAwOjAwWnwxMjM>; rel="next"'
+            ETag:
+              description: Weak entity tag of the response body.
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AlertPage'
+        '304':
+          $ref: '#/components/responses/NotModified'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+
+  /v1/alerts/{alertId}:
+    get:
+      tags: [Alerts]
+      operationId: getAlert
+      summary: Get one alert of the caller's ward
+      description: Requires the `WARD_LEAD` role. An alert of another ward is answered with 404.
+      parameters:
+        - $ref: '#/components/parameters/AlertId'
+        - $ref: '#/components/parameters/IfNoneMatch'
+      responses:
+        '200':
+          description: The alert. `ETag` is its version, to be sent as `If-Match` when acknowledging.
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/XRequestId'
+            ETag:
+              $ref: '#/components/headers/VersionETag'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Alert'
+        '304':
+          $ref: '#/components/responses/NotModified'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+
+  /v1/alerts/{alertId}/acknowledge:
+    patch:
+      tags: [Alerts]
+      operationId: acknowledgeAlert
+      summary: Acknowledge an alert
+      description: |
+        Marks an OPEN alert as ACKNOWLEDGED by the caller. Optimistic locking: `If-Match` must carry the current
+        `ETag`; a missing header gives 428, a stale one 412. An alert that is already acknowledged gives 409.
+        Requires the `WARD_LEAD` role.
+      parameters:
+        - $ref: '#/components/parameters/AlertId'
+        - name: If-Match
+          in: header
+          required: false
+          description: The alert's current `ETag`, e.g. `"0"`. Missing → 428.
+          schema:
+            type: string
+          example: '"0"'
+      responses:
+        '200':
+          description: The acknowledged alert with its new version.
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/XRequestId'
+            ETag:
+              $ref: '#/components/headers/VersionETag'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Alert'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '412':
+          $ref: '#/components/responses/PreconditionFailed'
+        '428':
+          $ref: '#/components/responses/PreconditionRequired'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+
+  /v1/alerts/{alertId}/guidance:
+    get:
+      tags: [Alerts]
+      operationId: getAlertGuidance
+      summary: Protocol guidance for one alert (advisory)
+      description: |
+        Requires the `WARD_LEAD` role. Retrieval-augmented generation over the facility's care protocols: the protocol
+        matching the alert (and, for an unconfirmed value, the review protocol) is retrieved, and the steps are written
+        from those sections only. Every step cites the section ids it is based on, and every cited id is listed in
+        `sources`. `generatedBy` is `CLAUDE` or `GEMINI` when that LLM phrased the steps and `EXTRACTIVE` when the protocol's own
+        steps were copied (no LLM configured, or the LLM's answer failed the citation check). When no protocol matches,
+        `status` is `NO_MATCHING_PROTOCOL` with empty `steps` and `sources`. Advisory only: nothing is changed.
+      parameters:
+        - $ref: '#/components/parameters/AlertId'
+      responses:
+        '200':
+          description: The guidance.
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/XRequestId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AlertGuidance'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+
+  /livez:
+    get:
+      tags: [Operations]
+      operationId: liveness
+      summary: Liveness probe (process is up)
+      security: []
+      responses:
+        '200':
+          description: The process is running.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Health'
+              example:
+                status: UP
+                checks: {}
+
+  /readyz:
+    get:
+      tags: [Operations]
+      operationId: readiness
+      summary: Readiness probe (MongoDB primary reachable, RabbitMQ consumer connected)
+      security: []
+      responses:
+        '200':
+          description: Ready to serve traffic.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Health'
+              example:
+                status: UP
+                checks:
+                  mongo: UP
+                  rabbitmq: UP
+        '503':
+          description: Not ready (a dependency is down or the instance is shutting down).
+          headers:
+            Retry-After:
+              $ref: '#/components/headers/RetryAfter'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Health'
+              example:
+                status: DOWN
+                checks:
+                  mongo: DOWN
+                  rabbitmq: UP
+
+  /metrics:
+    get:
+      tags: [Operations]
+      operationId: metrics
+      summary: Prometheus metrics
+      security: []
+      responses:
+        '200':
+          description: Metrics in the Prometheus text exposition format.
+          content:
+            text/plain:
+              schema:
+                type: string
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: |
+        HS256 JWT issued by documentation-service. Claims: `iss`, `aud`, `sub`, `tenant`, `ward`, `roles`, `iat`,
+        `exp`, `jti`. Roles: `SERVICE` for events, `WARD_LEAD` for alerts.
+
+  parameters:
+    AlertId:
+      name: alertId
+      in: path
+      required: true
+      schema:
+        type: string
+        minLength: 1
+        maxLength: 64
+      example: 3d6f0a2b-1c4e-4b8a-9f7d-6e5c4b3a2f10
+    IfNoneMatch:
+      name: If-None-Match
+      in: header
+      required: false
+      description: An `ETag` from a previous response; a match answers 304 without a body.
+      schema:
+        type: string
+
+  headers:
+    XRequestId:
+      description: Correlation id of this request (the incoming one when valid, otherwise generated).
+      schema:
+        type: string
+        pattern: '^[A-Za-z0-9._:-]{1,64}$'
+    RetryAfter:
+      description: Seconds to wait before retrying.
+      schema:
+        type: integer
+        minimum: 0
+    VersionETag:
+      description: Strong entity tag holding the alert version, e.g. `"0"`.
+      schema:
+        type: string
+        pattern: '^"[0-9]+"$'
+    WwwAuthenticate:
+      description: Authentication challenge.
+      schema:
+        type: string
+      example: Bearer realm="carevoice"
+
+  responses:
+    NotModified:
+      description: The representation matches `If-None-Match`; no body.
+      headers:
+        X-Request-Id:
+          $ref: '#/components/headers/XRequestId'
+        ETag:
+          schema:
+            type: string
+    BadRequest:
+      description: Malformed JSON, wrong types, missing fields, invalid query parameters or a malformed cursor.
+      headers:
+        X-Request-Id:
+          $ref: '#/components/headers/XRequestId'
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/Problem'
+          examples:
+            malformedJson:
+              value:
+                type: https://carevoice.dev/problems/malformed-request
+                title: Malformed request
+                status: 400
+                detail: The request body is not valid JSON or does not match the expected structure.
+                instance: /v1/events/observations
+                requestId: 7c1d0e8a-2f3b-4c5d-9e6f-0a1b2c3d4e5f
+            invalidLimit:
+              value:
+                type: https://carevoice.dev/problems/validation-failed
+                title: Validation failed
+                status: 400
+                detail: One or more request parameters are invalid.
+                instance: /v1/alerts
+                requestId: 7c1d0e8a-2f3b-4c5d-9e6f-0a1b2c3d4e5f
+                errors:
+                  - field: limit
+                    message: must be an integer between 1 and 100
+    Unauthorized:
+      description: Missing, malformed, expired or otherwise invalid bearer token.
+      headers:
+        X-Request-Id:
+          $ref: '#/components/headers/XRequestId'
+        WWW-Authenticate:
+          $ref: '#/components/headers/WwwAuthenticate'
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/Problem'
+          example:
+            type: https://carevoice.dev/problems/unauthorized
+            title: Unauthorized
+            status: 401
+            detail: A valid bearer token is required.
+            instance: /v1/alerts
+            requestId: 7c1d0e8a-2f3b-4c5d-9e6f-0a1b2c3d4e5f
+    Forbidden:
+      description: The token is valid but lacks the required role.
+      headers:
+        X-Request-Id:
+          $ref: '#/components/headers/XRequestId'
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/Problem'
+          example:
+            type: https://carevoice.dev/problems/forbidden
+            title: Forbidden
+            status: 403
+            detail: This operation requires the role WARD_LEAD.
+            instance: /v1/alerts
+            requestId: 7c1d0e8a-2f3b-4c5d-9e6f-0a1b2c3d4e5f
+    NotFound:
+      description: The alert does not exist in the caller's ward.
+      headers:
+        X-Request-Id:
+          $ref: '#/components/headers/XRequestId'
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/Problem'
+          example:
+            type: https://carevoice.dev/problems/not-found
+            title: Not found
+            status: 404
+            detail: Alert 3d6f0a2b-1c4e-4b8a-9f7d-6e5c4b3a2f10 was not found.
+            instance: /v1/alerts/3d6f0a2b-1c4e-4b8a-9f7d-6e5c4b3a2f10
+            requestId: 7c1d0e8a-2f3b-4c5d-9e6f-0a1b2c3d4e5f
+    Conflict:
+      description: The alert is already acknowledged.
+      headers:
+        X-Request-Id:
+          $ref: '#/components/headers/XRequestId'
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/Problem'
+          example:
+            type: https://carevoice.dev/problems/already-acknowledged
+            title: Already acknowledged
+            status: 409
+            detail: Alert 3d6f0a2b-1c4e-4b8a-9f7d-6e5c4b3a2f10 is already acknowledged.
+            instance: /v1/alerts/3d6f0a2b-1c4e-4b8a-9f7d-6e5c4b3a2f10/acknowledge
+            requestId: 7c1d0e8a-2f3b-4c5d-9e6f-0a1b2c3d4e5f
+    PreconditionFailed:
+      description: '`If-Match` does not match the current version of the alert.'
+      headers:
+        X-Request-Id:
+          $ref: '#/components/headers/XRequestId'
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/Problem'
+          example:
+            type: https://carevoice.dev/problems/precondition-failed
+            title: Precondition failed
+            status: 412
+            detail: The alert was modified by someone else. Fetch it again and retry.
+            instance: /v1/alerts/3d6f0a2b-1c4e-4b8a-9f7d-6e5c4b3a2f10/acknowledge
+            requestId: 7c1d0e8a-2f3b-4c5d-9e6f-0a1b2c3d4e5f
+    PreconditionRequired:
+      description: '`If-Match` is missing.'
+      headers:
+        X-Request-Id:
+          $ref: '#/components/headers/XRequestId'
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/Problem'
+          example:
+            type: https://carevoice.dev/problems/precondition-required
+            title: Precondition required
+            status: 428
+            detail: The If-Match header is required to update this resource.
+            instance: /v1/alerts/3d6f0a2b-1c4e-4b8a-9f7d-6e5c4b3a2f10/acknowledge
+            requestId: 7c1d0e8a-2f3b-4c5d-9e6f-0a1b2c3d4e5f
+    PayloadTooLarge:
+      description: The request body exceeds 64 KiB.
+      headers:
+        X-Request-Id:
+          $ref: '#/components/headers/XRequestId'
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/Problem'
+          example:
+            type: https://carevoice.dev/problems/payload-too-large
+            title: Payload too large
+            status: 413
+            detail: The request body must not exceed 65536 bytes.
+            instance: /v1/events/observations
+            requestId: 7c1d0e8a-2f3b-4c5d-9e6f-0a1b2c3d4e5f
+    UnsupportedMediaType:
+      description: The body is not `application/json`.
+      headers:
+        X-Request-Id:
+          $ref: '#/components/headers/XRequestId'
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/Problem'
+          example:
+            type: https://carevoice.dev/problems/unsupported-media-type
+            title: Unsupported media type
+            status: 415
+            detail: The request body must be application/json.
+            instance: /v1/events/observations
+            requestId: 7c1d0e8a-2f3b-4c5d-9e6f-0a1b2c3d4e5f
+    UnprocessableEntity:
+      description: Well-formed event with an unknown `schemaVersion` or invalid values.
+      headers:
+        X-Request-Id:
+          $ref: '#/components/headers/XRequestId'
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/Problem'
+          examples:
+            unsupportedSchemaVersion:
+              value:
+                type: https://carevoice.dev/problems/unsupported-schema-version
+                title: Unsupported schema version
+                status: 422
+                detail: schemaVersion 2 is not supported; supported versions are [1].
+                instance: /v1/events/observations
+                requestId: 7c1d0e8a-2f3b-4c5d-9e6f-0a1b2c3d4e5f
+            invalidValues:
+              value:
+                type: https://carevoice.dev/problems/invalid-event
+                title: Invalid event
+                status: 422
+                detail: The event contains invalid values.
+                instance: /v1/events/observations
+                requestId: 7c1d0e8a-2f3b-4c5d-9e6f-0a1b2c3d4e5f
+                errors:
+                  - field: occurredAt
+                    message: must be an ISO-8601 instant
+    TooManyRequests:
+      description: The per-user rate limit is exhausted.
+      headers:
+        X-Request-Id:
+          $ref: '#/components/headers/XRequestId'
+        Retry-After:
+          $ref: '#/components/headers/RetryAfter'
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/Problem'
+          example:
+            type: https://carevoice.dev/problems/too-many-requests
+            title: Too many requests
+            status: 429
+            detail: The rate limit is exhausted. Retry after the time given in Retry-After.
+            instance: /v1/alerts
+            requestId: 7c1d0e8a-2f3b-4c5d-9e6f-0a1b2c3d4e5f
+    InternalError:
+      description: Unexpected error. The body never contains exception details.
+      headers:
+        X-Request-Id:
+          $ref: '#/components/headers/XRequestId'
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/Problem'
+          example:
+            type: https://carevoice.dev/problems/internal-error
+            title: Internal server error
+            status: 500
+            detail: An unexpected error occurred.
+            instance: /v1/alerts
+            requestId: 7c1d0e8a-2f3b-4c5d-9e6f-0a1b2c3d4e5f
+    ServiceUnavailable:
+      description: Overloaded, or MongoDB has no reachable primary (e.g. during a failover). Retry later.
+      headers:
+        X-Request-Id:
+          $ref: '#/components/headers/XRequestId'
+        Retry-After:
+          $ref: '#/components/headers/RetryAfter'
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/Problem'
+          example:
+            type: https://carevoice.dev/problems/service-unavailable
+            title: Service unavailable
+            status: 503
+            detail: The service is temporarily unable to handle the request. Retry after the time given in Retry-After.
+            instance: /v1/events/observations
+            requestId: 7c1d0e8a-2f3b-4c5d-9e6f-0a1b2c3d4e5f
+
+  schemas:
+    ObservationRecordedEvent:
+      type: object
+      description: Published by documentation-service for every stored observation. No personal data.
+      required: [eventId, occurredAt, tenantId, wardId, residentId, observationId, vital, source, status]
+      properties:
+        eventId:
+          type: string
+          minLength: 1
+          maxLength: 64
+          description: Idempotency key of the delivery.
+        schemaVersion:
+          type: integer
+          default: 1
+          description: Only version 1 is supported; any other value → 422.
+        occurredAt:
+          type: string
+          format: date-time
+        tenantId:
+          type: string
+          minLength: 1
+        wardId:
+          type: string
+          minLength: 1
+        residentId:
+          type: string
+          minLength: 1
+        observationId:
+          type: string
+          minLength: 1
+        vital:
+          $ref: '#/components/schemas/Vital'
+        source:
+          type: string
+          enum: [RULES, AI]
+        status:
+          type: string
+          enum: [CONFIRMED, NEEDS_REVIEW]
+
+    Vital:
+      description: One vital sign, discriminated by `type`.
+      oneOf:
+        - $ref: '#/components/schemas/BloodPressureVital'
+        - $ref: '#/components/schemas/PulseVital'
+        - $ref: '#/components/schemas/BodyTemperatureVital'
+      discriminator:
+        propertyName: type
+        mapping:
+          BLOOD_PRESSURE: '#/components/schemas/BloodPressureVital'
+          PULSE: '#/components/schemas/PulseVital'
+          BODY_TEMPERATURE: '#/components/schemas/BodyTemperatureVital'
+
+    BloodPressureVital:
+      type: object
+      required: [type, systolic, diastolic]
+      properties:
+        type:
+          type: string
+          const: BLOOD_PRESSURE
+        systolic:
+          type: integer
+          description: mmHg
+          example: 185
+        diastolic:
+          type: integer
+          description: mmHg
+          example: 95
+
+    PulseVital:
+      type: object
+      required: [type, bpm]
+      properties:
+        type:
+          type: string
+          const: PULSE
+        bpm:
+          type: integer
+          description: Beats per minute
+          example: 130
+
+    BodyTemperatureVital:
+      type: object
+      required: [type, celsius]
+      properties:
+        type:
+          type: string
+          const: BODY_TEMPERATURE
+        celsius:
+          type: number
+          description: Degrees Celsius
+          example: 39.8
+
+    EventAccepted:
+      type: object
+      additionalProperties: false
+      required: [eventId, alertsCreated]
+      properties:
+        eventId:
+          type: string
+        alertsCreated:
+          type: integer
+          minimum: 0
+
+    AlertStatus:
+      type: string
+      enum: [OPEN, ACKNOWLEDGED]
+
+    Severity:
+      type: string
+      enum: [CRITICAL, WARNING]
+
+    AlertRule:
+      type: string
+      enum: [HYPERTENSIVE_CRISIS, HYPOTENSION, TACHYCARDIA, BRADYCARDIA, HIGH_FEVER, HYPOTHERMIA]
+
+    Alert:
+      type: object
+      additionalProperties: false
+      required:
+        - id
+        - tenantId
+        - wardId
+        - residentId
+        - observationId
+        - eventId
+        - rule
+        - severity
+        - message
+        - vital
+        - status
+        - observedAt
+        - createdAt
+        - acknowledgedBy
+        - acknowledgedAt
+        - version
+      properties:
+        id:
+          type: string
+        tenantId:
+          type: string
+        wardId:
+          type: string
+        residentId:
+          type: string
+        observationId:
+          type: string
+        eventId:
+          type: string
+        rule:
+          $ref: '#/components/schemas/AlertRule'
+        severity:
+          $ref: '#/components/schemas/Severity'
+        message:
+          type: string
+          description: Human-readable reason. Values that still need review are flagged with "unconfirmed value".
+        vital:
+          $ref: '#/components/schemas/Vital'
+        status:
+          $ref: '#/components/schemas/AlertStatus'
+        observedAt:
+          type: string
+          format: date-time
+        createdAt:
+          type: string
+          format: date-time
+        acknowledgedBy:
+          type: [string, 'null']
+        acknowledgedAt:
+          type: [string, 'null']
+          format: date-time
+        version:
+          type: integer
+          minimum: 0
+      example:
+        id: 3d6f0a2b-1c4e-4b8a-9f7d-6e5c4b3a2f10
+        tenantId: sunrise-care
+        wardId: ward-a
+        residentId: res-1
+        observationId: 0b9a3c55-8c41-4e8e-a0f5-5e3f2f6f9d21
+        eventId: 6f1c2a7e-3b7d-4f7a-9a0e-2d4c1b8e9f10
+        rule: HYPERTENSIVE_CRISIS
+        severity: CRITICAL
+        message: 'Blood pressure 185/95 mmHg: systolic >= 180 or diastolic >= 120 (hypertensive crisis).'
+        vital:
+          type: BLOOD_PRESSURE
+          systolic: 185
+          diastolic: 95
+        status: OPEN
+        observedAt: '2026-10-25T10:00:00Z'
+        createdAt: '2026-10-25T10:00:01.250Z'
+        acknowledgedBy: null
+        acknowledgedAt: null
+        version: 0
+
+    AlertPage:
+      type: object
+      additionalProperties: false
+      required: [items, nextCursor]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/Alert'
+        nextCursor:
+          type: [string, 'null']
+          description: Cursor of the next page, null on the last page.
+
+    AlertGuidance:
+      type: object
+      additionalProperties: false
+      required: [alertId, rule, status, generatedBy, steps, sources, disclaimer]
+      properties:
+        alertId:
+          type: string
+        rule:
+          $ref: '#/components/schemas/AlertRule'
+        status:
+          type: string
+          enum: [FOUND, NO_MATCHING_PROTOCOL]
+        generatedBy:
+          type: [string, 'null']
+          enum: [CLAUDE, GEMINI, EXTRACTIVE, null]
+          description: Who wrote the steps; null when no protocol matched.
+        steps:
+          type: array
+          maxItems: 8
+          items:
+            $ref: '#/components/schemas/GuidanceStep'
+        sources:
+          type: array
+          items:
+            $ref: '#/components/schemas/GuidanceSource'
+        disclaimer:
+          type: string
+    GuidanceStep:
+      type: object
+      additionalProperties: false
+      required: [text, citations]
+      properties:
+        text:
+          type: string
+          maxLength: 400
+        citations:
+          type: array
+          minItems: 1
+          items:
+            type: string
+          description: Ids of the `sources` this step is based on.
+    GuidanceSource:
+      type: object
+      additionalProperties: false
+      required: [id, protocol, section, score, excerpt]
+      properties:
+        id:
+          type: string
+          example: hypertensive-crisis#2
+        protocol:
+          type: string
+          example: 'Protocol 4.2: Hypertensive crisis (very high blood pressure)'
+        section:
+          type: string
+          example: Immediate steps
+        score:
+          type: number
+          description: Cosine similarity of the section to the retrieval query (higher is more relevant).
+        excerpt:
+          type: string
+
+    Health:
+      type: object
+      required: [status, checks]
+      properties:
+        status:
+          type: string
+          enum: [UP, DOWN]
+        checks:
+          type: object
+          additionalProperties:
+            type: string
+            enum: [UP, DOWN]
+
+    FieldError:
+      type: object
+      additionalProperties: false
+      required: [field, message]
+      properties:
+        field:
+          type: string
+        message:
+          type: string
+
+    Problem:
+      type: object
+      description: RFC 9457 problem details.
+      required: [type, title, status, instance, requestId]
+      properties:
+        type:
+          type: string
+          format: uri
+        title:
+          type: string
+        status:
+          type: integer
+        detail:
+          type: string
+        instance:
+          type: string
+        requestId:
+          type: string
+        errors:
+          type: array
+          items:
+            $ref: '#/components/schemas/FieldError'

@@ -1,0 +1,102 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  JSON logs to stdout, ERROR to stderr (docs/CONTRACTS.md, section 10). Only the listed MDC keys are written, so a value someone puts
+  into the MDC by accident never leaks into the log pipeline. Never log transcript text, names, tokens or bodies.
+-->
+<configuration>
+    <statusListener class="ch.qos.logback.core.status.NopStatusListener"/>
+
+    <appender name="JSON" class="ch.qos.logback.core.ConsoleAppender">
+        <!-- Error/fatal go to stderr, everything else to stdout (Promtail relies on the split). -->
+        <filter class="ch.qos.logback.classic.filter.LevelFilter">
+            <level>ERROR</level>
+            <onMatch>DENY</onMatch>
+            <onMismatch>NEUTRAL</onMismatch>
+        </filter>
+        <encoder class="net.logstash.logback.encoder.LogstashEncoder">
+            <fieldNames>
+                <timestamp>timestamp</timestamp>
+                <version>[ignore]</version>
+                <levelValue>[ignore]</levelValue>
+                <logger>logger</logger>
+                <thread>thread</thread>
+            </fieldNames>
+            <includeMdcKeyName>requestId</includeMdcKeyName>
+            <includeMdcKeyName>userId</includeMdcKeyName>
+            <includeMdcKeyName>tenantId</includeMdcKeyName>
+            <includeMdcKeyName>wardId</includeMdcKeyName>
+            <includeMdcKeyName>traceId</includeMdcKeyName>
+            <includeMdcKeyName>spanId</includeMdcKeyName>
+            <includeMdcKeyName>type</includeMdcKeyName>
+            <includeMdcKeyName>eventId</includeMdcKeyName>
+            <includeMdcKeyName>job</includeMdcKeyName>
+            <customFields>{"service":"alert-service"}</customFields>
+            <throwableConverter class="net.logstash.logback.stacktrace.ShortenedThrowableConverter">
+                <maxDepthPerThrowable>30</maxDepthPerThrowable>
+                <rootCauseFirst>true</rootCauseFirst>
+            </throwableConverter>
+        </encoder>
+    </appender>
+
+    <appender name="JSON_ERR" class="ch.qos.logback.core.ConsoleAppender">
+        <target>System.err</target>
+        <filter class="ch.qos.logback.classic.filter.ThresholdFilter">
+            <level>ERROR</level>
+        </filter>
+        <encoder class="net.logstash.logback.encoder.LogstashEncoder">
+            <fieldNames>
+                <timestamp>timestamp</timestamp>
+                <version>[ignore]</version>
+                <levelValue>[ignore]</levelValue>
+                <logger>logger</logger>
+                <thread>thread</thread>
+            </fieldNames>
+            <includeMdcKeyName>requestId</includeMdcKeyName>
+            <includeMdcKeyName>userId</includeMdcKeyName>
+            <includeMdcKeyName>tenantId</includeMdcKeyName>
+            <includeMdcKeyName>wardId</includeMdcKeyName>
+            <includeMdcKeyName>traceId</includeMdcKeyName>
+            <includeMdcKeyName>spanId</includeMdcKeyName>
+            <includeMdcKeyName>type</includeMdcKeyName>
+            <includeMdcKeyName>eventId</includeMdcKeyName>
+            <includeMdcKeyName>job</includeMdcKeyName>
+            <customFields>{"service":"alert-service"}</customFields>
+            <throwableConverter class="net.logstash.logback.stacktrace.ShortenedThrowableConverter">
+                <maxDepthPerThrowable>30</maxDepthPerThrowable>
+                <rootCauseFirst>true</rootCauseFirst>
+            </throwableConverter>
+        </encoder>
+    </appender>
+
+    <appender name="ASYNC" class="ch.qos.logback.classic.AsyncAppender">
+        <appender-ref ref="JSON"/>
+        <queueSize>8192</queueSize>
+        <discardingThreshold>0</discardingThreshold>
+        <neverBlock>true</neverBlock>
+    </appender>
+
+    <appender name="ASYNC_ERR" class="ch.qos.logback.classic.AsyncAppender">
+        <appender-ref ref="JSON_ERR"/>
+        <queueSize>8192</queueSize>
+        <discardingThreshold>0</discardingThreshold>
+        <neverBlock>true</neverBlock>
+    </appender>
+
+    <logger name="org.mongodb.driver" level="WARN"/>
+    <logger name="com.rabbitmq" level="WARN"/>
+    <logger name="io.netty" level="WARN"/>
+    <!-- Ktor's MicrometerMetrics plugin always adds a MeterFilter on install (percentiles for ktor.http.server.requests),
+         after the pool, outbox and cache meters exist, so Micrometer warns "A MeterFilter is being configured after a
+         Meter has been registered". Harmless here: that filter only touches the Ktor request timer, which is created
+         later, on the first request, and CareVoice registers no MeterFilter of its own. ERROR keeps real failures.
+         Micrometer logs this under the registry's runtime class, hence the Prometheus registry's name here. -->
+    <logger name="io.micrometer.prometheusmetrics.PrometheusMeterRegistry" level="ERROR"/>
+    <logger name="io.ktor" level="INFO"/>
+    <!-- Application log level, same variable as documentation-service; libraries stay at INFO/WARN. -->
+    <logger name="com.carevoice" level="${LOG_LEVEL:-${CAREVOICE_LOG_LEVEL:-INFO}}"/>
+
+    <root level="INFO">
+        <appender-ref ref="ASYNC"/>
+        <appender-ref ref="ASYNC_ERR"/>
+    </root>
+</configuration>
