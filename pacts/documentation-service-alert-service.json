@@ -1,0 +1,380 @@
+{
+  "consumer": {
+    "name": "documentation-service"
+  },
+  "interactions": [
+    {
+      "comments": {
+        "testname": "com.carevoice.documentation.contract.AlertServiceHttpPactTest.should publish an observation recorded event that alert-service accepts(MockServer)",
+        "text": [
+
+        ]
+      },
+      "description": "an observation recorded event",
+      "key": "2575189f",
+      "pending": false,
+      "providerStates": [
+        {
+          "name": "the alert service accepts events"
+        }
+      ],
+      "request": {
+        "body": {
+          "content": {
+            "eventId": "3fa85f64-5717-4562-b3fc-2c963f66afa6",
+            "observationId": "6f1c2b8e-1d4a-4c55-9b7e-0a2f1e3d4c5b",
+            "occurredAt": "2026-10-25T10:00:00Z",
+            "residentId": "res-1",
+            "schemaVersion": 1,
+            "source": "RULES",
+            "status": "CONFIRMED",
+            "tenantId": "sunrise-care",
+            "vital": {
+              "diastolic": 95,
+              "systolic": 182,
+              "type": "BLOOD_PRESSURE"
+            },
+            "wardId": "ward-a"
+          },
+          "contentType": "application/json",
+          "encoded": false
+        },
+        "headers": {
+          "Authorization": [
+            "Bearer header.payload.signature"
+          ],
+          "Content-Type": [
+            "application/json"
+          ],
+          "Idempotency-Key": [
+            "3fa85f64-5717-4562-b3fc-2c963f66afa6"
+          ]
+        },
+        "matchingRules": {
+          "body": {
+            "$.eventId": {
+              "combine": "AND",
+              "matchers": [
+                {
+                  "match": "regex",
+                  "regex": "[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}"
+                }
+              ]
+            },
+            "$.observationId": {
+              "combine": "AND",
+              "matchers": [
+                {
+                  "match": "regex",
+                  "regex": "[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}"
+                }
+              ]
+            },
+            "$.occurredAt": {
+              "combine": "AND",
+              "matchers": [
+                {
+                  "match": "regex",
+                  "regex": "\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(\\.\\d{1,9})?Z"
+                }
+              ]
+            },
+            "$.residentId": {
+              "combine": "AND",
+              "matchers": [
+                {
+                  "match": "type"
+                }
+              ]
+            },
+            "$.schemaVersion": {
+              "combine": "AND",
+              "matchers": [
+                {
+                  "match": "integer"
+                }
+              ]
+            },
+            "$.source": {
+              "combine": "AND",
+              "matchers": [
+                {
+                  "match": "regex",
+                  "regex": "RULES|AI"
+                }
+              ]
+            },
+            "$.status": {
+              "combine": "AND",
+              "matchers": [
+                {
+                  "match": "regex",
+                  "regex": "CONFIRMED|NEEDS_REVIEW"
+                }
+              ]
+            },
+            "$.tenantId": {
+              "combine": "AND",
+              "matchers": [
+                {
+                  "match": "type"
+                }
+              ]
+            },
+            "$.vital.diastolic": {
+              "combine": "AND",
+              "matchers": [
+                {
+                  "match": "integer"
+                }
+              ]
+            },
+            "$.vital.systolic": {
+              "combine": "AND",
+              "matchers": [
+                {
+                  "match": "integer"
+                }
+              ]
+            },
+            "$.wardId": {
+              "combine": "AND",
+              "matchers": [
+                {
+                  "match": "type"
+                }
+              ]
+            }
+          },
+          "header": {
+            "Authorization": {
+              "combine": "AND",
+              "matchers": [
+                {
+                  "match": "regex",
+                  "regex": "Bearer [A-Za-z0-9_=-]+\\.[A-Za-z0-9_=-]+\\.[A-Za-z0-9_.+/=-]*"
+                }
+              ]
+            },
+            "Content-Type": {
+              "combine": "AND",
+              "matchers": [
+                {
+                  "match": "regex",
+                  "regex": "application/json(;\\s*charset=[\\w-]+)?"
+                }
+              ]
+            },
+            "Idempotency-Key": {
+              "combine": "AND",
+              "matchers": [
+                {
+                  "match": "regex",
+                  "regex": "[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}"
+                }
+              ]
+            }
+          }
+        },
+        "method": "POST",
+        "path": "/v1/events/observations"
+      },
+      "response": {
+        "body": {
+          "content": {
+            "alertsCreated": 1,
+            "eventId": "3fa85f64-5717-4562-b3fc-2c963f66afa6"
+          },
+          "contentType": "application/json; charset=UTF-8",
+          "encoded": false
+        },
+        "headers": {
+          "Content-Type": [
+            "application/json; charset=UTF-8"
+          ]
+        },
+        "matchingRules": {
+          "body": {
+            "$.alertsCreated": {
+              "combine": "AND",
+              "matchers": [
+                {
+                  "match": "integer"
+                }
+              ]
+            },
+            "$.eventId": {
+              "combine": "AND",
+              "matchers": [
+                {
+                  "match": "regex",
+                  "regex": "[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}"
+                }
+              ]
+            }
+          },
+          "header": {
+            "Content-Type": {
+              "combine": "AND",
+              "matchers": [
+                {
+                  "match": "regex",
+                  "regex": "application/json(;\\s?charset=[\\w\\-]+)?"
+                }
+              ]
+            }
+          }
+        },
+        "status": 202
+      },
+      "transport": "http",
+      "type": "Synchronous/HTTP"
+    },
+    {
+      "comments": {
+        "testname": "com.carevoice.documentation.contract.AlertServiceMessagePactTest.should produce a message that matches the pact(AsynchronousMessage)"
+      },
+      "contents": {
+        "content": {
+          "eventId": "3fa85f64-5717-4562-b3fc-2c963f66afa6",
+          "observationId": "6f1c2b8e-1d4a-4c55-9b7e-0a2f1e3d4c5b",
+          "occurredAt": "2026-10-25T10:00:00Z",
+          "residentId": "res-1",
+          "schemaVersion": 1,
+          "source": "RULES",
+          "status": "CONFIRMED",
+          "tenantId": "sunrise-care",
+          "vital": {
+            "diastolic": 95,
+            "systolic": 182,
+            "type": "BLOOD_PRESSURE"
+          },
+          "wardId": "ward-a"
+        },
+        "contentType": "application/json",
+        "encoded": false
+      },
+      "description": "an observation recorded event message",
+      "key": "2d5042fa",
+      "matchingRules": {
+        "body": {
+          "$.eventId": {
+            "combine": "AND",
+            "matchers": [
+              {
+                "match": "regex",
+                "regex": "[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}"
+              }
+            ]
+          },
+          "$.observationId": {
+            "combine": "AND",
+            "matchers": [
+              {
+                "match": "regex",
+                "regex": "[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}"
+              }
+            ]
+          },
+          "$.occurredAt": {
+            "combine": "AND",
+            "matchers": [
+              {
+                "match": "regex",
+                "regex": "\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(\\.\\d{1,9})?Z"
+              }
+            ]
+          },
+          "$.residentId": {
+            "combine": "AND",
+            "matchers": [
+              {
+                "match": "type"
+              }
+            ]
+          },
+          "$.schemaVersion": {
+            "combine": "AND",
+            "matchers": [
+              {
+                "match": "integer"
+              }
+            ]
+          },
+          "$.source": {
+            "combine": "AND",
+            "matchers": [
+              {
+                "match": "regex",
+                "regex": "RULES|AI"
+              }
+            ]
+          },
+          "$.status": {
+            "combine": "AND",
+            "matchers": [
+              {
+                "match": "regex",
+                "regex": "CONFIRMED|NEEDS_REVIEW"
+              }
+            ]
+          },
+          "$.tenantId": {
+            "combine": "AND",
+            "matchers": [
+              {
+                "match": "type"
+              }
+            ]
+          },
+          "$.vital.diastolic": {
+            "combine": "AND",
+            "matchers": [
+              {
+                "match": "integer"
+              }
+            ]
+          },
+          "$.vital.systolic": {
+            "combine": "AND",
+            "matchers": [
+              {
+                "match": "integer"
+              }
+            ]
+          },
+          "$.wardId": {
+            "combine": "AND",
+            "matchers": [
+              {
+                "match": "type"
+              }
+            ]
+          }
+        }
+      },
+      "metadata": {
+        "contentType": "application/json",
+        "schemaVersion": 1
+      },
+      "pending": false,
+      "providerStates": [
+        {
+          "name": "the alert service accepts events"
+        }
+      ],
+      "type": "Asynchronous/Messages"
+    }
+  ],
+  "metadata": {
+    "pact-jvm": {
+      "version": "4.6.17"
+    },
+    "pactSpecification": {
+      "version": "4.0"
+    }
+  },
+  "provider": {
+    "name": "alert-service"
+  }
+}
