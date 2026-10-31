@@ -1,0 +1,24 @@
+# Build output (also covers the reports of make db-bench and make security-scan under build/)
+.gradle/
+build/
+.kotlin/
+out/
+*.log
+
+# IDE and OS
+.idea/
+*.iml
+.vscode/
+.DS_Store
+
+# Secrets: .env holds API keys and passwords; any variant of it (.env.local, .env.bak) is just as secret.
+.env
+.env.*
+!.env.example
+
+# JVM diagnostics (heap dumps, Flight Recorder): they contain whatever was in memory, including personal data.
+*.hprof
+*.jfr
+
+# Homepage writes logs/ into its config folder when file logging is on (LOG_TARGETS=stdout here).
+deploy/homepage/logs/

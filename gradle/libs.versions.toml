@@ -1,0 +1,157 @@
+# Single source of truth for dependency versions (Gradle version catalog).
+# Every module refers to libs.<alias>, so upgrading a library is a one-line change.
+# Versions marked "seen" are already resolved on the developer machine by other projects.
+
+[versions]
+kotlin = "2.4.21"                 # seen
+coroutines = "1.11.0"             # seen
+serialization = "1.9.0"
+ktor = "3.3.0"
+logback = "1.5.18"
+logstash-encoder = "8.1"
+kotlin-logging = "7.0.7"
+hikari = "6.3.0"
+postgresql = "42.7.7"
+flyway = "11.10.0"
+mongodb = "5.5.1"
+caffeine = "3.2.2"
+bcrypt = "0.10.2"
+micrometer = "1.15.2"
+resilience4j = "2.4.0"            # seen
+junit = "5.13.4"
+assertj = "3.27.3"
+mockk = "1.14.5"
+testcontainers = "1.21.3"
+embedded-postgres = "2.1.0"
+embedded-mongo = "4.20.0"
+embedded-redis = "1.4.3"
+lettuce = "6.7.1.RELEASE"
+amqp-client = "5.25.0"
+java-jwt = "4.5.0"
+opentelemetry-api = "1.52.0"
+wiremock = "3.13.2"               # seen
+json-schema-validator = "1.5.8"
+jackson = "2.19.2"
+konsist = "0.17.3"
+pact = "4.6.17"
+gatling = "3.16.0"               # plugin >= 3.14.6 needed for Gradle 9, >= 3.14.7 for the configuration cache
+kover = "0.9.11"                  # seen
+spotless = "8.10.3"               # seen
+ktlint = "1.8.0"                  # seen
+test-logger = "4.0.0"             # seen
+cyclonedx = "3.4.1"               # seen
+pitest-plugin = "1.15.0"
+pitest-junit5 = "1.2.1"
+
+[libraries]
+# Kotlin
+kotlinx-coroutines-core = { module = "org.jetbrains.kotlinx:kotlinx-coroutines-core", version.ref = "coroutines" }
+kotlinx-coroutines-test = { module = "org.jetbrains.kotlinx:kotlinx-coroutines-test", version.ref = "coroutines" }
+# Carries the SLF4J MDC (requestId, userId) across coroutine thread switches
+kotlinx-coroutines-slf4j = { module = "org.jetbrains.kotlinx:kotlinx-coroutines-slf4j", version.ref = "coroutines" }
+kotlinx-serialization-json = { module = "org.jetbrains.kotlinx:kotlinx-serialization-json", version.ref = "serialization" }
+
+# Ktor server
+ktor-server-core = { module = "io.ktor:ktor-server-core", version.ref = "ktor" }
+ktor-server-netty = { module = "io.ktor:ktor-server-netty", version.ref = "ktor" }
+ktor-server-content-negotiation = { module = "io.ktor:ktor-server-content-negotiation", version.ref = "ktor" }
+ktor-server-auth = { module = "io.ktor:ktor-server-auth", version.ref = "ktor" }
+ktor-server-auth-jwt = { module = "io.ktor:ktor-server-auth-jwt", version.ref = "ktor" }
+ktor-server-status-pages = { module = "io.ktor:ktor-server-status-pages", version.ref = "ktor" }
+ktor-server-call-id = { module = "io.ktor:ktor-server-call-id", version.ref = "ktor" }
+ktor-server-call-logging = { module = "io.ktor:ktor-server-call-logging", version.ref = "ktor" }
+ktor-server-rate-limit = { module = "io.ktor:ktor-server-rate-limit", version.ref = "ktor" }
+ktor-server-sse = { module = "io.ktor:ktor-server-sse", version.ref = "ktor" }
+ktor-server-metrics-micrometer = { module = "io.ktor:ktor-server-metrics-micrometer", version.ref = "ktor" }
+ktor-server-default-headers = { module = "io.ktor:ktor-server-default-headers", version.ref = "ktor" }
+ktor-server-swagger = { module = "io.ktor:ktor-server-swagger", version.ref = "ktor" }
+ktor-server-test-host = { module = "io.ktor:ktor-server-test-host", version.ref = "ktor" }
+ktor-serialization-kotlinx-json = { module = "io.ktor:ktor-serialization-kotlinx-json", version.ref = "ktor" }
+
+# Ktor client (service-to-service, Claude API)
+ktor-client-core = { module = "io.ktor:ktor-client-core", version.ref = "ktor" }
+ktor-client-cio = { module = "io.ktor:ktor-client-cio", version.ref = "ktor" }
+ktor-client-content-negotiation = { module = "io.ktor:ktor-client-content-negotiation", version.ref = "ktor" }
+
+# Logging
+logback-classic = { module = "ch.qos.logback:logback-classic", version.ref = "logback" }
+logstash-logback-encoder = { module = "net.logstash.logback:logstash-logback-encoder", version.ref = "logstash-encoder" }
+kotlin-logging = { module = "io.github.oshai:kotlin-logging-jvm", version.ref = "kotlin-logging" }
+
+# Persistence
+hikari = { module = "com.zaxxer:HikariCP", version.ref = "hikari" }
+postgresql = { module = "org.postgresql:postgresql", version.ref = "postgresql" }
+flyway-core = { module = "org.flywaydb:flyway-core", version.ref = "flyway" }
+flyway-postgresql = { module = "org.flywaydb:flyway-database-postgresql", version.ref = "flyway" }
+mongodb-kotlin-coroutine = { module = "org.mongodb:mongodb-driver-kotlin-coroutine", version.ref = "mongodb" }
+mongodb-bson-kotlinx = { module = "org.mongodb:bson-kotlinx", version.ref = "mongodb" }
+
+# Redis (shared rate limits, cache invalidation and SSE fan-out across replicas)
+lettuce = { module = "io.lettuce:lettuce-core", version.ref = "lettuce" }
+kotlinx-coroutines-reactive = { module = "org.jetbrains.kotlinx:kotlinx-coroutines-reactive", version.ref = "coroutines" }
+
+# RabbitMQ (event transport between the services)
+amqp-client = { module = "com.rabbitmq:amqp-client", version.ref = "amqp-client" }
+
+# OpenTelemetry API only (no SDK): read the current trace context; the Java agent supplies the implementation
+opentelemetry-api = { module = "io.opentelemetry:opentelemetry-api", version.ref = "opentelemetry-api" }
+
+# JWT creation/verification (also used by ktor-server-auth-jwt; declared explicitly because the code imports it)
+java-jwt = { module = "com.auth0:java-jwt", version.ref = "java-jwt" }
+
+# Cross-cutting
+caffeine = { module = "com.github.ben-manes.caffeine:caffeine", version.ref = "caffeine" }
+bcrypt = { module = "at.favre.lib:bcrypt", version.ref = "bcrypt" }
+micrometer-prometheus = { module = "io.micrometer:micrometer-registry-prometheus", version.ref = "micrometer" }
+resilience4j-circuitbreaker = { module = "io.github.resilience4j:resilience4j-circuitbreaker", version.ref = "resilience4j" }
+resilience4j-kotlin = { module = "io.github.resilience4j:resilience4j-kotlin", version.ref = "resilience4j" }
+resilience4j-micrometer = { module = "io.github.resilience4j:resilience4j-micrometer", version.ref = "resilience4j" }
+
+# Testing
+junit-bom = { module = "org.junit:junit-bom", version.ref = "junit" }
+junit-jupiter = { module = "org.junit.jupiter:junit-jupiter" }
+junit-platform-launcher = { module = "org.junit.platform:junit-platform-launcher" }
+assertj = { module = "org.assertj:assertj-core", version.ref = "assertj" }
+mockk = { module = "io.mockk:mockk", version.ref = "mockk" }
+testcontainers-bom = { module = "org.testcontainers:testcontainers-bom", version.ref = "testcontainers" }
+testcontainers-junit = { module = "org.testcontainers:junit-jupiter" }
+testcontainers-postgresql = { module = "org.testcontainers:postgresql" }
+testcontainers-mongodb = { module = "org.testcontainers:mongodb" }
+testcontainers-toxiproxy = { module = "org.testcontainers:toxiproxy" }
+testcontainers-rabbitmq = { module = "org.testcontainers:rabbitmq" }
+# Real database engines as local processes, no Docker (default test backend, see test-support TestDatabases)
+embedded-postgres = { module = "io.zonky.test:embedded-postgres", version.ref = "embedded-postgres" }
+embedded-mongo = { module = "de.flapdoodle.embed:de.flapdoodle.embed.mongo", version.ref = "embedded-mongo" }
+embedded-redis = { module = "com.github.codemonstur:embedded-redis", version.ref = "embedded-redis" }
+wiremock = { module = "org.wiremock:wiremock-standalone", version.ref = "wiremock" }
+json-schema-validator = { module = "com.networknt:json-schema-validator", version.ref = "json-schema-validator" }
+jackson-databind = { module = "com.fasterxml.jackson.core:jackson-databind", version.ref = "jackson" }
+jackson-yaml = { module = "com.fasterxml.jackson.dataformat:jackson-dataformat-yaml", version.ref = "jackson" }
+konsist = { module = "com.lemonappdev:konsist", version.ref = "konsist" }
+pact-consumer-junit5 = { module = "au.com.dius.pact.consumer:junit5", version.ref = "pact" }
+pact-provider-junit5 = { module = "au.com.dius.pact.provider:junit5", version.ref = "pact" }
+
+# Build logic (used by the convention plugins in build-logic/)
+kotlin-gradle-plugin = { module = "org.jetbrains.kotlin:kotlin-gradle-plugin", version.ref = "kotlin" }
+kover-gradle-plugin = { module = "org.jetbrains.kotlinx:kover-gradle-plugin", version.ref = "kover" }
+spotless-gradle-plugin = { module = "com.diffplug.spotless:spotless-plugin-gradle", version.ref = "spotless" }
+test-logger-gradle-plugin = { module = "com.adarshr:gradle-test-logger-plugin", version.ref = "test-logger" }
+
+[bundles]
+ktor-server = [
+    "ktor-server-core", "ktor-server-netty", "ktor-server-content-negotiation", "ktor-serialization-kotlinx-json",
+    "ktor-server-auth", "ktor-server-auth-jwt", "ktor-server-status-pages", "ktor-server-call-id",
+    "ktor-server-call-logging", "ktor-server-rate-limit", "ktor-server-metrics-micrometer",
+    "ktor-server-default-headers", "ktor-server-swagger",
+]
+ktor-client = ["ktor-client-core", "ktor-client-cio", "ktor-client-content-negotiation"]
+logging = ["logback-classic", "logstash-logback-encoder", "kotlin-logging"]
+
+[plugins]
+kotlin-jvm = { id = "org.jetbrains.kotlin.jvm", version.ref = "kotlin" }
+kotlin-serialization = { id = "org.jetbrains.kotlin.plugin.serialization", version.ref = "kotlin" }
+ktor = { id = "io.ktor.plugin", version.ref = "ktor" }
+kover = { id = "org.jetbrains.kotlinx.kover", version.ref = "kover" }
+cyclonedx = { id = "org.cyclonedx.bom", version.ref = "cyclonedx" }
+gatling = { id = "io.gatling.gradle", version.ref = "gatling" }
+pitest = { id = "info.solidsoft.pitest", version.ref = "pitest-plugin" }
