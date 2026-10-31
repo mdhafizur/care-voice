@@ -1,0 +1,1000 @@
+openapi: 3.1.1
+info:
+  title: CareVoice documentation-service
+  version: 1.0.0
+  summary: Turns nurses' spoken documentation into validated vital-sign observations.
+  description: |
+    A nurse dictates into the mobile app; the app sends the transcript here. The service extracts vital signs
+    (blood pressure, pulse, body temperature) with deterministic rules (AI fallback when the rules find nothing),
+    stores them as observations and publishes an event to alert-service through a transactional outbox.
+
+    Conventions:
+    - JSON only. Wrong `Content-Type` on a body → 415, body larger than 64 KiB → 413.
+    - Errors are RFC 9457 `application/problem+json`. 5xx bodies never contain internal details.
+    - Every response carries `X-Request-Id` (the client's value when it matches `[A-Za-z0-9._:-]{1,64}`, else generated).
+    - Tenant/ward isolation: a resource in another ward is answered with 404, not 403.
+    - Lists use keyset pagination with an opaque `cursor`; responses carry `X-Total-Count` and an RFC 8288 `Link` header.
+    - `QUERY /v1/observations` uses the HTTP QUERY method (documented with the `query` operation field of OpenAPI 3.2);
+      `POST /v1/observations/search` is the equivalent for clients and proxies without QUERY support.
+servers:
+  - url: http://localhost:8080
+    description: Local docker compose
+tags:
+  - name: Authentication
+  - name: Residents
+  - name: Transcripts
+  - name: Observations
+  - name: Operations
+security:
+  - bearerAuth: []
+
+paths:
+  /v1/auth/token:
+    post:
+      tags: [Authentication]
+      operationId: issueToken
+      summary: Exchange username and password for an access token
+      description: |
+        Wrong username and wrong password give the same 401 and take the same time (no user enumeration).
+        Rate-limited per client IP (10 requests per minute).
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/TokenRequest'
+            example:
+              username: nurse.anna
+              password: correct-horse-battery
+      responses:
+        '200':
+          description: Token issued.
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/XRequestId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TokenResponse'
+              example:
+                accessToken: eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJudXJzZS5hbm5hIn0.signature
+                tokenType: Bearer
+                expiresIn: 900
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
+        '415':
+          $ref: '#/components/responses/UnsupportedMediaType'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /v1/residents/{residentId}:
+    get:
+      tags: [Residents]
+      operationId: getResident
+      summary: Read a resident of the caller's ward
+      parameters:
+        - $ref: '#/components/parameters/ResidentId'
+        - $ref: '#/components/parameters/IfNoneMatch'
+      responses:
+        '200':
+          description: The resident, with the display name decrypted.
+          headers:
+            ETag:
+              $ref: '#/components/headers/WeakETag'
+            X-Request-Id:
+              $ref: '#/components/headers/XRequestId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Resident'
+              example:
+                id: res-1
+                wardId: ward-a
+                displayName: Margaret Smith
+        '304':
+          $ref: '#/components/responses/NotModified'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /v1/residents/{residentId}/transcripts:
+    post:
+      tags: [Transcripts]
+      operationId: submitTranscript
+      summary: Submit a dictated transcript for a resident
+      description: |
+        Extracts vital signs, stores them as observations and publishes one event per observation. Idempotent per
+        user and `Idempotency-Key`: a retry with the same key and body returns 200 with the identical body and
+        `Idempotent-Replayed: true`; the same key with a different body is 409.
+      parameters:
+        - $ref: '#/components/parameters/ResidentId'
+        - name: Idempotency-Key
+          in: header
+          required: true
+          description: A client-generated UUID, reused unchanged for retries of the same submission.
+          schema:
+            type: string
+            format: uuid
+          example: 3f2b8c1e-5d4a-4f6b-9a7c-1e2d3c4b5a69
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/TranscriptRequest'
+            example:
+              transcript: Mrs. Smith, blood pressure 120 over 75, pulse 80, temperature 37.2 degrees
+      responses:
+        '201':
+          description: Transcript processed.
+          headers:
+            Location:
+              description: URL of the processed transcript.
+              schema:
+                type: string
+              example: /v1/transcripts/7c9e6679-7425-40de-944b-e07fc1f90ae7
+            X-Request-Id:
+              $ref: '#/components/headers/XRequestId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TranscriptResponse'
+              examples:
+                transcript:
+                  $ref: '#/components/examples/Transcript'
+        '200':
+          description: Replay of an earlier submission with the same key and body; identical body.
+          headers:
+            Location:
+              description: URL of the processed transcript.
+              schema:
+                type: string
+            Idempotent-Replayed:
+              description: Always `true` on a replay.
+              schema:
+                type: string
+                const: 'true'
+            X-Request-Id:
+              $ref: '#/components/headers/XRequestId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TranscriptResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
+        '415':
+          $ref: '#/components/responses/UnsupportedMediaType'
+        '422':
+          $ref: '#/components/responses/Unprocessable'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /v1/transcripts/{transcriptId}:
+    get:
+      tags: [Transcripts]
+      operationId: getTranscript
+      summary: Read a processed transcript
+      description: Returns the same body as the original 201. The raw transcript text is never returned.
+      parameters:
+        - name: transcriptId
+          in: path
+          required: true
+          schema:
+            type: string
+          example: 7c9e6679-7425-40de-944b-e07fc1f90ae7
+      responses:
+        '200':
+          description: The processed transcript.
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/XRequestId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TranscriptResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /v1/residents/{residentId}/observations:
+    get:
+      tags: [Observations]
+      operationId: listResidentObservations
+      summary: A resident's observations, newest first
+      parameters:
+        - $ref: '#/components/parameters/ResidentId'
+        - $ref: '#/components/parameters/Limit'
+        - $ref: '#/components/parameters/Cursor'
+        - $ref: '#/components/parameters/IfNoneMatch'
+      responses:
+        '200':
+          description: One page of observations.
+          headers:
+            X-Total-Count:
+              $ref: '#/components/headers/XTotalCount'
+            Link:
+              $ref: '#/components/headers/Link'
+            ETag:
+              $ref: '#/components/headers/WeakETag'
+            X-Request-Id:
+              $ref: '#/components/headers/XRequestId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ObservationList'
+        '304':
+          $ref: '#/components/responses/NotModified'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /v1/observations:
+    query:
+      tags: [Observations]
+      operationId: queryObservations
+      summary: Search observations of the caller's ward (HTTP QUERY)
+      description: |
+        Safe and idempotent like GET, with the filter in the body. Results are cached for 10 s per ward and filter
+        and invalidated when a new observation is stored in that ward. Unknown filter fields → 400;
+        `recordedFrom` after `recordedTo` → 422.
+      requestBody:
+        $ref: '#/components/requestBodies/ObservationFilter'
+      responses:
+        '200':
+          $ref: '#/components/responses/ObservationSearchResult'
+        '304':
+          $ref: '#/components/responses/NotModified'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
+        '415':
+          $ref: '#/components/responses/UnsupportedMediaType'
+        '422':
+          $ref: '#/components/responses/Unprocessable'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /v1/observations/search:
+    post:
+      tags: [Observations]
+      operationId: searchObservations
+      summary: Search observations of the caller's ward (POST fallback for QUERY)
+      description: Identical to `QUERY /v1/observations`, for clients and proxies that do not support QUERY.
+      requestBody:
+        $ref: '#/components/requestBodies/ObservationFilter'
+      responses:
+        '200':
+          $ref: '#/components/responses/ObservationSearchResult'
+        '304':
+          $ref: '#/components/responses/NotModified'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
+        '415':
+          $ref: '#/components/responses/UnsupportedMediaType'
+        '422':
+          $ref: '#/components/responses/Unprocessable'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /v1/observations/{observationId}/confirm:
+    patch:
+      tags: [Observations]
+      operationId: confirmObservation
+      summary: Confirm an observation that needs review
+      description: 'Optimistic locking: `If-Match` must carry the observation''s current ETag (its version).'
+      parameters:
+        - name: observationId
+          in: path
+          required: true
+          schema:
+            type: string
+          example: 0b1e8f2a-3c4d-4e5f-8a9b-0c1d2e3f4a5b
+        - name: If-Match
+          in: header
+          required: false
+          description: The current ETag, e.g. `"0"`. Missing → 428, stale → 412.
+          schema:
+            type: string
+          example: '"0"'
+      responses:
+        '200':
+          description: The confirmed observation with its new version.
+          headers:
+            ETag:
+              $ref: '#/components/headers/VersionETag'
+            X-Request-Id:
+              $ref: '#/components/headers/XRequestId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Observation'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '412':
+          $ref: '#/components/responses/PreconditionFailed'
+        '428':
+          $ref: '#/components/responses/PreconditionRequired'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /v1/observations/stream:
+    get:
+      tags: [Observations]
+      operationId: streamObservations
+      summary: Live observations of the caller's ward (Server-Sent Events)
+      description: |
+        Events `observation` with `id` = observation id and `data` = the observation JSON; a comment heartbeat every
+        15 s. Reconnect with `Last-Event-ID` to receive the observations missed in between.
+      parameters:
+        - name: Last-Event-ID
+          in: header
+          required: false
+          schema:
+            type: string
+      responses:
+        '200':
+          description: An event stream.
+          content:
+            text/event-stream:
+              schema:
+                type: string
+              example: |
+                event: observation
+                id: 0b1e8f2a-3c4d-4e5f-8a9b-0c1d2e3f4a5b
+                data: {"id":"0b1e8f2a-3c4d-4e5f-8a9b-0c1d2e3f4a5b","residentId":"res-1","vital":{"type":"PULSE","bpm":80},"source":"RULES","confidence":0.95,"status":"CONFIRMED","recordedAt":"2026-10-25T10:00:00Z","confirmedBy":null,"confirmedAt":null,"version":0}
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /livez:
+    get:
+      tags: [Operations]
+      operationId: liveness
+      summary: The process is up
+      security: []
+      responses:
+        '200':
+          description: Alive.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Health'
+              example:
+                status: UP
+                checks: {}
+
+  /readyz:
+    get:
+      tags: [Operations]
+      operationId: readiness
+      summary: Ready to receive traffic
+      description: |
+        503 while the database is unreachable or the instance is shutting down. Redis and RabbitMQ outages only
+        degrade the service (reported as DEGRADED in the body, status stays 200).
+      security: []
+      responses:
+        '200':
+          description: Ready (possibly degraded).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Health'
+              example:
+                status: DEGRADED
+                checks:
+                  database: UP
+                  redis: DEGRADED
+                  rabbitmq: UP
+        '503':
+          description: Not ready.
+          headers:
+            Retry-After:
+              $ref: '#/components/headers/RetryAfter'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Health'
+              example:
+                status: DOWN
+                checks:
+                  database: DOWN
+                  redis: UP
+
+  /metrics:
+    get:
+      tags: [Operations]
+      operationId: metrics
+      summary: Prometheus metrics
+      security: []
+      responses:
+        '200':
+          description: Metrics in the Prometheus text format.
+          content:
+            text/plain:
+              schema:
+                type: string
+
+  /openapi.yaml:
+    get:
+      tags: [Operations]
+      operationId: openApiSpec
+      summary: This specification
+      security: []
+      responses:
+        '200':
+          description: The OpenAPI document.
+          content:
+            application/yaml:
+              schema:
+                type: string
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: HS256 JWT from `POST /v1/auth/token` with claims tenant, ward and roles (NURSE or WARD_LEAD).
+
+  parameters:
+    ResidentId:
+      name: residentId
+      in: path
+      required: true
+      schema:
+        type: string
+        pattern: '^[A-Za-z0-9-]{1,64}$'
+      example: res-1
+    Limit:
+      name: limit
+      in: query
+      required: false
+      schema:
+        type: integer
+        minimum: 1
+        maximum: 100
+        default: 20
+    Cursor:
+      name: cursor
+      in: query
+      required: false
+      description: Opaque cursor from a `Link` header or `nextCursor`. Malformed → 400; unknown → first page.
+      schema:
+        type: string
+    IfNoneMatch:
+      name: If-None-Match
+      in: header
+      required: false
+      description: An ETag from an earlier response; when it still matches, the answer is 304 without a body.
+      schema:
+        type: string
+
+  headers:
+    XRequestId:
+      description: Correlation id of this request.
+      schema:
+        type: string
+    WeakETag:
+      description: Weak entity tag of the response body.
+      schema:
+        type: string
+      example: W/"9f86d081884c7d659a2feaa0c55ad015"
+    VersionETag:
+      description: Version of the resource, to send back as `If-Match`.
+      schema:
+        type: string
+      example: '"1"'
+    XTotalCount:
+      description: Number of items across all pages.
+      schema:
+        type: integer
+    Link:
+      description: RFC 8288 links with rel `first`, `next` (when more) and `prev` (when not on the first page).
+      schema:
+        type: string
+      example: '</v1/residents/res-1/observations?limit=20>; rel="first", </v1/residents/res-1/observations?limit=20&cursor=YXwyMDI2>; rel="next"'
+    RetryAfter:
+      description: Seconds to wait before retrying.
+      schema:
+        type: integer
+    WwwAuthenticate:
+      description: Authentication challenge.
+      schema:
+        type: string
+      example: Bearer realm="carevoice"
+
+  requestBodies:
+    ObservationFilter:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ObservationFilter'
+          example:
+            vitalTypes: [BLOOD_PRESSURE]
+            status: NEEDS_REVIEW
+            recordedFrom: '2026-10-25T00:00:00Z'
+            limit: 20
+
+  responses:
+    ObservationSearchResult:
+      description: One page of matching observations; pass `nextCursor` back as `cursor` for the next page.
+      headers:
+        X-Total-Count:
+          $ref: '#/components/headers/XTotalCount'
+        ETag:
+          $ref: '#/components/headers/WeakETag'
+        X-Request-Id:
+          $ref: '#/components/headers/XRequestId'
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ObservationList'
+    NotModified:
+      description: The client's copy (If-None-Match) is current.
+      headers:
+        ETag:
+          $ref: '#/components/headers/WeakETag'
+    BadRequest:
+      description: Malformed JSON, wrong types, unknown fields, or a missing/invalid header or parameter.
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/Problem'
+          example:
+            type: https://carevoice.dev/problems/bad-request
+            title: Bad Request
+            status: 400
+            detail: The request has an invalid header.
+            instance: /v1/residents/res-1/transcripts
+            requestId: 4bf92f35-77b3-4da6-a3ce-929d0e0e4736
+            errors:
+              - field: Idempotency-Key
+                message: must be a UUID
+    Unauthorized:
+      description: Missing, invalid or expired credentials.
+      headers:
+        WWW-Authenticate:
+          $ref: '#/components/headers/WwwAuthenticate'
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/Problem'
+          example:
+            type: https://carevoice.dev/problems/unauthorized
+            title: Unauthorized
+            status: 401
+            detail: A valid bearer token is required.
+            instance: /v1/residents/res-1
+            requestId: 4bf92f35-77b3-4da6-a3ce-929d0e0e4736
+    Forbidden:
+      description: The caller's role does not allow this operation.
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/Problem'
+    NotFound:
+      description: Does not exist, or exists outside the caller's ward.
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/Problem'
+          example:
+            type: https://carevoice.dev/problems/not-found
+            title: Not Found
+            status: 404
+            detail: Resident 'res-4' was not found.
+            instance: /v1/residents/res-4
+            requestId: 4bf92f35-77b3-4da6-a3ce-929d0e0e4736
+    Conflict:
+      description: Idempotency key reused with a different body, or the observation is already confirmed.
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/Problem'
+          example:
+            type: https://carevoice.dev/problems/idempotency-key-reused
+            title: Conflict
+            status: 409
+            detail: This Idempotency-Key was already used with a different request body.
+            instance: /v1/residents/res-1/transcripts
+            requestId: 4bf92f35-77b3-4da6-a3ce-929d0e0e4736
+    PreconditionFailed:
+      description: If-Match does not match the current version.
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/Problem'
+    PayloadTooLarge:
+      description: The request body exceeds 64 KiB.
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/Problem'
+    UnsupportedMediaType:
+      description: The request body is not application/json.
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/Problem'
+    Unprocessable:
+      description: Well-formed but semantically invalid (e.g. blank transcript, more than 2000 characters).
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/Problem'
+          example:
+            type: https://carevoice.dev/problems/validation-error
+            title: Unprocessable Content
+            status: 422
+            detail: The request is semantically invalid.
+            instance: /v1/residents/res-1/transcripts
+            requestId: 4bf92f35-77b3-4da6-a3ce-929d0e0e4736
+            errors:
+              - field: transcript
+                message: transcript must not be blank
+    PreconditionRequired:
+      description: The update requires an If-Match header.
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/Problem'
+    TooManyRequests:
+      description: Rate limit exceeded.
+      headers:
+        Retry-After:
+          $ref: '#/components/headers/RetryAfter'
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/Problem'
+    InternalError:
+      description: Unexpected error. The body never contains internal details.
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/Problem'
+          example:
+            type: https://carevoice.dev/problems/internal-error
+            title: Internal Server Error
+            status: 500
+            detail: An unexpected error occurred.
+            instance: /v1/residents/res-1/transcripts
+            requestId: 4bf92f35-77b3-4da6-a3ce-929d0e0e4736
+
+  examples:
+    Transcript:
+      value:
+        transcriptId: 7c9e6679-7425-40de-944b-e07fc1f90ae7
+        residentId: res-1
+        observations:
+          - id: 0b1e8f2a-3c4d-4e5f-8a9b-0c1d2e3f4a5b
+            residentId: res-1
+            vital:
+              type: BLOOD_PRESSURE
+              systolic: 120
+              diastolic: 75
+            source: RULES
+            confidence: 0.95
+            status: CONFIRMED
+            recordedAt: '2026-10-25T10:00:00Z'
+            confirmedBy: null
+            confirmedAt: null
+            version: 0
+        rejected:
+          - matchedText: bp 12/10
+            reason: systolic=12 is outside the plausible range [50, 260]
+        usedAiFallback: false
+
+  schemas:
+    TokenRequest:
+      type: object
+      additionalProperties: false
+      required: [username, password]
+      properties:
+        username:
+          type: string
+          example: nurse.anna
+        password:
+          type: string
+          format: password
+    TokenResponse:
+      type: object
+      additionalProperties: false
+      required: [accessToken, tokenType, expiresIn]
+      properties:
+        accessToken:
+          type: string
+        tokenType:
+          type: string
+          const: Bearer
+        expiresIn:
+          type: integer
+          description: Lifetime in seconds.
+    Resident:
+      type: object
+      additionalProperties: false
+      required: [id, wardId, displayName]
+      properties:
+        id:
+          type: string
+        wardId:
+          type: string
+        displayName:
+          type: string
+    TranscriptRequest:
+      type: object
+      additionalProperties: false
+      required: [transcript]
+      properties:
+        transcript:
+          type: string
+          maxLength: 2000
+          description: The recognised speech. Blank or longer than 2000 characters → 422.
+    Vital:
+      oneOf:
+        - $ref: '#/components/schemas/BloodPressure'
+        - $ref: '#/components/schemas/Pulse'
+        - $ref: '#/components/schemas/BodyTemperature'
+      discriminator:
+        propertyName: type
+        mapping:
+          BLOOD_PRESSURE: '#/components/schemas/BloodPressure'
+          PULSE: '#/components/schemas/Pulse'
+          BODY_TEMPERATURE: '#/components/schemas/BodyTemperature'
+    BloodPressure:
+      type: object
+      additionalProperties: false
+      required: [type, systolic, diastolic]
+      properties:
+        type:
+          const: BLOOD_PRESSURE
+        systolic:
+          type: integer
+          minimum: 50
+          maximum: 260
+        diastolic:
+          type: integer
+          minimum: 30
+          maximum: 160
+    Pulse:
+      type: object
+      additionalProperties: false
+      required: [type, bpm]
+      properties:
+        type:
+          const: PULSE
+        bpm:
+          type: integer
+          minimum: 20
+          maximum: 250
+    BodyTemperature:
+      type: object
+      additionalProperties: false
+      required: [type, celsius]
+      properties:
+        type:
+          const: BODY_TEMPERATURE
+        celsius:
+          type: number
+          minimum: 30
+          maximum: 44
+    Observation:
+      type: object
+      additionalProperties: false
+      required: [id, residentId, vital, source, confidence, status, recordedAt, confirmedBy, confirmedAt, version]
+      properties:
+        id:
+          type: string
+          format: uuid
+        residentId:
+          type: string
+        vital:
+          $ref: '#/components/schemas/Vital'
+        source:
+          type: string
+          enum: [RULES, AI]
+        confidence:
+          type: number
+          minimum: 0
+          maximum: 1
+        status:
+          type: string
+          enum: [CONFIRMED, NEEDS_REVIEW]
+        recordedAt:
+          type: string
+          format: date-time
+        confirmedBy:
+          type: [string, 'null']
+        confirmedAt:
+          type: [string, 'null']
+          format: date-time
+        version:
+          type: integer
+          minimum: 0
+    RejectedValue:
+      type: object
+      additionalProperties: false
+      required: [matchedText, reason]
+      properties:
+        matchedText:
+          type: string
+        reason:
+          type: string
+    TranscriptResponse:
+      type: object
+      additionalProperties: false
+      required: [transcriptId, residentId, observations, rejected, usedAiFallback]
+      properties:
+        transcriptId:
+          type: string
+          format: uuid
+        residentId:
+          type: string
+        observations:
+          type: array
+          items:
+            $ref: '#/components/schemas/Observation'
+        rejected:
+          type: array
+          items:
+            $ref: '#/components/schemas/RejectedValue'
+        usedAiFallback:
+          type: boolean
+    ObservationList:
+      type: object
+      additionalProperties: false
+      required: [items, nextCursor]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/Observation'
+        nextCursor:
+          type: [string, 'null']
+    ObservationFilter:
+      type: object
+      additionalProperties: false
+      properties:
+        residentIds:
+          type: array
+          maxItems: 100
+          items:
+            type: string
+            pattern: '^[A-Za-z0-9-]{1,64}$'
+        vitalTypes:
+          type: array
+          items:
+            type: string
+            enum: [BLOOD_PRESSURE, PULSE, BODY_TEMPERATURE]
+        status:
+          type: string
+          enum: [CONFIRMED, NEEDS_REVIEW]
+        recordedFrom:
+          type: string
+          format: date-time
+        recordedTo:
+          type: string
+          format: date-time
+        limit:
+          type: integer
+          minimum: 1
+          maximum: 100
+          default: 20
+        cursor:
+          type: string
+    Health:
+      type: object
+      additionalProperties: false
+      required: [status, checks]
+      properties:
+        status:
+          type: string
+          enum: [UP, DEGRADED, DOWN]
+        checks:
+          type: object
+          additionalProperties:
+            type: string
+            enum: [UP, DEGRADED, DOWN]
+    FieldError:
+      type: object
+      additionalProperties: false
+      required: [field, message]
+      properties:
+        field:
+          type: string
+        message:
+          type: string
+    Problem:
+      type: object
+      description: RFC 9457 problem details.
+      additionalProperties: false
+      required: [type, title, status, detail, instance, requestId]
+      properties:
+        type:
+          type: string
+          format: uri
+        title:
+          type: string
+        status:
+          type: integer
+        detail:
+          type: string
+        instance:
+          type: string
+        requestId:
+          type: [string, 'null']
+        errors:
+          type: array
+          items:
+            $ref: '#/components/schemas/FieldError'
