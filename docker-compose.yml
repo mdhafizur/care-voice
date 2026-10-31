@@ -212,6 +212,21 @@ services:
       - traefik.http.routers.grafana.service=grafana
       - traefik.http.services.grafana.loadbalancer.server.port=3000
 
+  # Grafana Alloy: reads the logs of the infrastructure containers through the Docker API and pushes them to the Loki
+  # inside otel-lgtm (deploy/alloy/config.alloy). The two services log through OpenTelemetry instead.
+  alloy:
+    image: grafana/alloy:v1.19.2
+    restart: unless-stopped
+    command: ["run", "--server.http.listen-addr=0.0.0.0:12345", "--storage.path=/var/lib/alloy/data", "/etc/alloy/config.alloy"]
+    environment:
+      COMPOSE_PROJECT: ${COMPOSE_PROJECT_NAME:-carevoice}
+    volumes:
+      - ./deploy/alloy/config.alloy:/etc/alloy/config.alloy:ro
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - alloy-data:/var/lib/alloy/data # read positions, so a restart does not ship old lines twice
+    depends_on:
+      - otel-lgtm
+
   # -------------------------------------------------------------------------------------------------------------------
   # Reverse proxy / load balancer
   # -------------------------------------------------------------------------------------------------------------------
@@ -514,5 +529,6 @@ volumes:
   mongo-config:
   rabbitmq-data:
   otel-lgtm-data:
+  alloy-data:
   uptime-kuma-v1-data:
   pgadmin-data:

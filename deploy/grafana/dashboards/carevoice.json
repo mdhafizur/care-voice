@@ -110,6 +110,34 @@
           "text": "",
           "value": ""
         }
+      },
+      {
+        "name": "infra",
+        "label": "Infrastructure container",
+        "type": "query",
+        "datasource": {
+          "type": "loki",
+          "uid": "loki"
+        },
+        "refresh": 2,
+        "query": {
+          "type": 1,
+          "label": "service_name",
+          "stream": "{source=\"docker\"}",
+          "refId": "infra-var"
+        },
+        "definition": "label_values({source=\"docker\"}, service_name)",
+        "includeAll": true,
+        "multi": true,
+        "allValue": ".+",
+        "current": {
+          "text": [
+            "All"
+          ],
+          "value": [
+            "$__all"
+          ]
+        }
       }
     ]
   },
@@ -2348,6 +2376,39 @@
             "uid": "loki"
           },
           "expr": "{service_name=~\".+\", service_name=~\"$service\"} |~ \"$log_filter\""
+        }
+      ]
+    },
+    {
+      "id": 52,
+      "type": "logs",
+      "title": "Infrastructure logs ($infra)",
+      "description": "Postgres, MongoDB, RabbitMQ, Redis, Traefik, otel-lgtm and the admin tools, shipped by Grafana Alloy from the containers' output. The services' own logs are in the panel above.",
+      "datasource": {
+        "type": "loki",
+        "uid": "loki"
+      },
+      "gridPos": {
+        "h": 12,
+        "w": 24,
+        "x": 0,
+        "y": 124
+      },
+      "options": {
+        "showTime": true,
+        "wrapLogMessage": true,
+        "sortOrder": "Descending",
+        "enableLogDetails": true,
+        "prettifyLogMessage": true
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "loki",
+            "uid": "loki"
+          },
+          "refId": "A",
+          "expr": "{source=\"docker\", service_name=~\"$infra\"} |~ \"$log_filter\""
         }
       ]
     }

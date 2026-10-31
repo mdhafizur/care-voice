@@ -1,0 +1,54 @@
+// Grafana Alloy: ships the logs of the infrastructure containers (Postgres, MongoDB, RabbitMQ, Redis, Traefik,
+// otel-lgtm, the admin tools, ...) to the Loki inside otel-lgtm, so Grafana shows them next to the services' logs.
+//
+// documentation-service and alert-service are skipped: their logs already reach Loki through the OpenTelemetry agent,
+// as structured JSON with trace ids; shipping their stdout too would duplicate every line.
+//
+// Labels: service_name (the compose service, e.g. rabbitmq), container (e.g. carevoice-rabbitmq-1), source="docker".
+// Query in Grafana: {source="docker", service_name="rabbitmq"}
+
+discovery.docker "containers" {
+  host = "unix:///var/run/docker.sock"
+}
+
+discovery.relabel "containers" {
+  targets = discovery.docker.containers.targets
+
+  // Only this compose project's containers (other projects on the machine stay out).
+  rule {
+    source_labels = ["__meta_docker_container_label_com_docker_compose_project"]
+    regex         = sys.env("COMPOSE_PROJECT")
+    action        = "keep"
+  }
+
+  // The services log through OpenTelemetry already (see above).
+  rule {
+    source_labels = ["__meta_docker_container_label_com_docker_compose_service"]
+    regex         = "documentation-service|alert-service"
+    action        = "drop"
+  }
+
+  rule {
+    source_labels = ["__meta_docker_container_label_com_docker_compose_service"]
+    target_label  = "service_name"
+  }
+
+  rule {
+    source_labels = ["__meta_docker_container_name"]
+    regex         = "/(.*)"
+    target_label  = "container"
+  }
+}
+
+loki.source.docker "containers" {
+  host       = "unix:///var/run/docker.sock"
+  targets    = discovery.relabel.containers.output
+  labels     = {"source" = "docker"}
+  forward_to = [loki.write.lgtm.receiver]
+}
+
+loki.write "lgtm" {
+  endpoint {
+    url = "http://otel-lgtm:3100/loki/api/v1/push"
+  }
+}
