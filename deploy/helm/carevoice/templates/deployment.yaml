@@ -1,0 +1,116 @@
+{{- range $key, $svc := .Values.services }}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ $svc.name }}
+  labels:
+    {{- include "carevoice.labels" (dict "root" $ "svc" $svc) | nindent 4 }}
+spec:
+  {{- /* With the HPA on, the HPA owns the replica count (minReplicas); a fixed value would fight it on upgrade. */}}
+  {{- if not $svc.autoscaling.enabled }}
+  replicas: {{ $svc.replicas }}
+  {{- end }}
+  revisionHistoryLimit: 5
+  selector:
+    matchLabels:
+      {{- include "carevoice.selectorLabels" (dict "root" $ "svc" $svc) | nindent 6 }}
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      # Never below the current capacity during a rollout: one new pod first, an old one only after it is ready.
+      maxUnavailable: 0
+      maxSurge: 1
+  template:
+    metadata:
+      labels:
+        {{- include "carevoice.labels" (dict "root" $ "svc" $svc) | nindent 8 }}
+      annotations:
+        # Roll the pods when the ConfigMap changes (envFrom is read only at container start).
+        checksum/config: {{ toJson $svc.config | sha256sum }}
+        prometheus.io/scrape: "true"
+        prometheus.io/port: {{ $svc.port | quote }}
+        prometheus.io/path: /metrics
+    spec:
+      {{- with $.Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      automountServiceAccountToken: false
+      # preStop sleep + the application's own graceful shutdown must fit in here (see values.yaml).
+      terminationGracePeriodSeconds: {{ $svc.terminationGracePeriodSeconds }}
+      securityContext:
+        {{- include "carevoice.podSecurityContext" $ | nindent 8 }}
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: kubernetes.io/hostname
+          whenUnsatisfiable: {{ $.Values.topologySpread.hostnameWhenUnsatisfiable }}
+          labelSelector:
+            matchLabels:
+              {{- include "carevoice.selectorLabels" (dict "root" $ "svc" $svc) | nindent 14 }}
+          matchLabelKeys:
+            - pod-template-hash
+        - maxSkew: 1
+          topologyKey: topology.kubernetes.io/zone
+          whenUnsatisfiable: {{ $.Values.topologySpread.zoneWhenUnsatisfiable }}
+          labelSelector:
+            matchLabels:
+              {{- include "carevoice.selectorLabels" (dict "root" $ "svc" $svc) | nindent 14 }}
+          matchLabelKeys:
+            - pod-template-hash
+      containers:
+        - name: {{ $svc.name }}
+          image: {{ include "carevoice.image" (dict "root" $ "svc" $svc) }}
+          imagePullPolicy: {{ $.Values.image.pullPolicy }}
+          ports:
+            - name: http
+              containerPort: {{ $svc.port }}
+              protocol: TCP
+          envFrom:
+            - configMapRef:
+                name: {{ include "carevoice.configMapName" $svc }}
+            - secretRef:
+                name: {{ $svc.secretName }}
+          {{- with $svc.env }}
+          env:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          startupProbe:
+            httpGet:
+              path: {{ $.Values.probes.startup.path }}
+              port: http
+            periodSeconds: {{ $.Values.probes.startup.periodSeconds }}
+            timeoutSeconds: {{ $.Values.probes.startup.timeoutSeconds }}
+            failureThreshold: {{ $.Values.probes.startup.failureThreshold }}
+          livenessProbe:
+            httpGet:
+              path: {{ $.Values.probes.liveness.path }}
+              port: http
+            periodSeconds: {{ $.Values.probes.liveness.periodSeconds }}
+            timeoutSeconds: {{ $.Values.probes.liveness.timeoutSeconds }}
+            failureThreshold: {{ $.Values.probes.liveness.failureThreshold }}
+          readinessProbe:
+            httpGet:
+              path: {{ $.Values.probes.readiness.path }}
+              port: http
+            periodSeconds: {{ $.Values.probes.readiness.periodSeconds }}
+            timeoutSeconds: {{ $.Values.probes.readiness.timeoutSeconds }}
+            failureThreshold: {{ $.Values.probes.readiness.failureThreshold }}
+          lifecycle:
+            preStop:
+              # Endpoint removal propagates asynchronously; keep serving briefly before SIGTERM starts the drain.
+              exec:
+                command: ["sleep", "{{ $.Values.preStopSleepSeconds }}"]
+          resources:
+            {{- toYaml $svc.resources | nindent 12 }}
+          securityContext:
+            {{- include "carevoice.containerSecurityContext" $ | nindent 12 }}
+          volumeMounts:
+            # Writable scratch space (JFR recordings, Netty native libraries, JVM temp files).
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: tmp
+          emptyDir:
+            sizeLimit: 256Mi
+{{- end }}

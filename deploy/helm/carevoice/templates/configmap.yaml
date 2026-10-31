@@ -1,0 +1,14 @@
+{{- range $key, $svc := .Values.services }}
+---
+# Non-secret configuration of {{ $svc.name }} (CONTRACTS section 4), loaded with envFrom.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "carevoice.configMapName" $svc }}
+  labels:
+    {{- include "carevoice.labels" (dict "root" $ "svc" $svc) | nindent 4 }}
+data:
+  {{- range $name, $value := $svc.config }}
+  {{ $name }}: {{ $value | toString | quote }}
+  {{- end }}
+{{- end }}

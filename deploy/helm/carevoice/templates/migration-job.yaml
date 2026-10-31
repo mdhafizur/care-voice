@@ -1,0 +1,75 @@
+{{- /*
+Migration Jobs (CONTRACTS sections 9b and 14): one Job per service, run by Helm before any other resource of an
+install or upgrade. The release only proceeds when both Jobs succeed; a failed migration leaves the running pods on
+the old version untouched.
+
+Hooks run before the chart's ConfigMaps exist (pre-install), so the configuration is rendered inline here from the
+same values instead of referencing the ConfigMap. The referenced Secrets must already exist (see values.yaml).
+documentation-service uses DATABASE_MIGRATION_URL (direct to the primary, never through PgBouncer).
+*/}}
+{{- range $key, $svc := .Values.services }}
+{{- if $svc.migration.enabled }}
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ printf "%s-migrate" $svc.name }}
+  labels:
+    {{- include "carevoice.labels" (dict "root" $ "svc" $svc "component" "migration") | nindent 4 }}
+  annotations:
+    "helm.sh/hook": pre-install,pre-upgrade
+    "helm.sh/hook-weight": "0"
+    # Delete the previous Job before creating the new one; keep a failed Job for `kubectl logs`.
+    "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded
+spec:
+  # Flyway and the Mongo runner take their own locks and are idempotent, so a retry is safe.
+  backoffLimit: 2
+  activeDeadlineSeconds: 600
+  template:
+    metadata:
+      labels:
+        {{- include "carevoice.labels" (dict "root" $ "svc" $svc "component" "migration") | nindent 8 }}
+    spec:
+      restartPolicy: Never
+      automountServiceAccountToken: false
+      {{- with $.Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      securityContext:
+        {{- include "carevoice.podSecurityContext" $ | nindent 8 }}
+      containers:
+        - name: migrate
+          image: {{ include "carevoice.image" (dict "root" $ "svc" $svc) }}
+          imagePullPolicy: {{ $.Values.image.pullPolicy }}
+          args:
+            {{- toYaml $svc.migration.args | nindent 12 }}
+          envFrom:
+            - secretRef:
+                name: {{ $svc.secretName }}
+          env:
+            {{- range $name, $value := $svc.config }}
+            {{- /* OTEL_SERVICE_NAME is set below (<service>-migrate); a duplicate env name is rejected by the API. */}}
+            {{- if ne $name "OTEL_SERVICE_NAME" }}
+            - name: {{ $name }}
+              value: {{ $value | toString | quote }}
+            {{- end }}
+            {{- end }}
+            - name: OTEL_SERVICE_NAME
+              value: {{ printf "%s-migrate" $svc.name | quote }}
+            {{- with $svc.env }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
+          resources:
+            {{- toYaml $svc.migration.resources | nindent 12 }}
+          securityContext:
+            {{- include "carevoice.containerSecurityContext" $ | nindent 12 }}
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: tmp
+          emptyDir:
+            sizeLimit: 128Mi
+{{- end }}
+{{- end }}

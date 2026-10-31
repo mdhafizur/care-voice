@@ -1,0 +1,119 @@
+# Production overrides:
+#   helm upgrade --install carevoice deploy/helm/carevoice -n carevoice \
+#     -f deploy/helm/carevoice/values-production.yaml --set image.tag=<git sha>
+#
+# Databases and the broker are external managed services; all connection details below are placeholders.
+# Required Secrets in the release namespace (create them with your secret manager, e.g. External Secrets):
+#   carevoice-secrets      JWT_SECRET, DATA_ENCRYPTION_KEY, DATA_ENCRYPTION_PREVIOUS_KEYS (during rotation),
+#                          ANTHROPIC_API_KEY (when AI is enabled)
+#   carevoice-postgres     username, password
+#   carevoice-mongodb      username, password
+#   carevoice-rabbitmq     username, password
+#   carevoice-redis        password
+
+image:
+  registry: ghcr.io/example-org
+  pullPolicy: IfNotPresent
+  tag: "" # set per release (--set image.tag=<git sha>)
+
+topologySpread:
+  hostnameWhenUnsatisfiable: DoNotSchedule
+  zoneWhenUnsatisfiable: ScheduleAnyway
+
+ingress:
+  enabled: true
+  className: traefik
+  host: api.carevoice.example
+  tls:
+    enabled: true
+    # Switch to letsencrypt-staging while testing the setup (no rate limits, untrusted certificates).
+    clusterIssuer: letsencrypt-production
+    secretName: carevoice-api-tls
+
+networkPolicy:
+  enabled: true
+  # Managed services live outside the cluster: allow their private address ranges (placeholders).
+  postgres:
+    ports: [5432, 6432]
+    to:
+      - ipBlock: { cidr: 10.20.0.0/24 }
+  redis:
+    ports: [6379, 26379]
+    to:
+      - ipBlock: { cidr: 10.20.1.0/24 }
+  rabbitmq:
+    ports: [5671]
+    to:
+      - ipBlock: { cidr: 10.20.2.0/24 }
+  mongo:
+    ports: [27017]
+    to:
+      - ipBlock: { cidr: 10.20.3.0/24 }
+
+services:
+  documentation:
+    replicas: 3
+    autoscaling:
+      enabled: true
+      minReplicas: 3
+      maxReplicas: 6
+      targetCPUUtilizationPercentage: 70
+    config:
+      # Managed PgBouncer / pooler endpoint (transaction mode) for the application ...
+      DATABASE_URL: jdbc:postgresql://pooler.postgres.internal.example:6432/carevoice?sslmode=verify-full
+      # ... and the primary itself for Flyway.
+      DATABASE_MIGRATION_URL: jdbc:postgresql://primary.postgres.internal.example:5432/carevoice?sslmode=verify-full
+      # Optional read replica for QueryObservations (CONTRACTS section 14).
+      DATABASE_READ_URL: jdbc:postgresql://replica.postgres.internal.example:5432/carevoice?sslmode=verify-full
+      DATABASE_POOL_SIZE: "5"
+      DEMO_SEED_ENABLED: "false"
+      # null removes the local default; REDIS_URL is built from the Redis secret in env below.
+      REDIS_URL: null
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector.observability:4318
+    env:
+      - name: DATABASE_USER
+        valueFrom:
+          secretKeyRef: { name: carevoice-postgres, key: username }
+      - name: DATABASE_PASSWORD
+        valueFrom:
+          secretKeyRef: { name: carevoice-postgres, key: password }
+      - name: REDIS_PASSWORD
+        valueFrom:
+          secretKeyRef: { name: carevoice-redis, key: password }
+      - name: REDIS_URL
+        value: rediss://:$(REDIS_PASSWORD)@redis.internal.example:6379
+      - name: RABBITMQ_USER
+        valueFrom:
+          secretKeyRef: { name: carevoice-rabbitmq, key: username }
+      - name: RABBITMQ_PASSWORD
+        valueFrom:
+          secretKeyRef: { name: carevoice-rabbitmq, key: password }
+      - name: RABBITMQ_URL
+        value: amqps://$(RABBITMQ_USER):$(RABBITMQ_PASSWORD)@rabbitmq.internal.example:5671/carevoice
+
+  alert:
+    replicas: 3
+    autoscaling:
+      enabled: true
+      minReplicas: 3
+      maxReplicas: 6
+      targetCPUUtilizationPercentage: 70
+    config:
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector.observability:4318
+    env:
+      - name: MONGO_USER
+        valueFrom:
+          secretKeyRef: { name: carevoice-mongodb, key: username }
+      - name: MONGO_PASSWORD
+        valueFrom:
+          secretKeyRef: { name: carevoice-mongodb, key: password }
+      - name: MONGO_URI
+        value: mongodb://$(MONGO_USER):$(MONGO_PASSWORD)@mongo-0.internal.example:27017,mongo-1.internal.example:27017,mongo-2.internal.example:27017/carevoice_alerts?replicaSet=rs0&tls=true&authSource=admin
+      - name: RABBITMQ_USER
+        valueFrom:
+          secretKeyRef: { name: carevoice-rabbitmq, key: username }
+      - name: RABBITMQ_PASSWORD
+        valueFrom:
+          secretKeyRef: { name: carevoice-rabbitmq, key: password }
+      - name: RABBITMQ_URL
+        value: amqps://$(RABBITMQ_USER):$(RABBITMQ_PASSWORD)@rabbitmq.internal.example:5671/carevoice

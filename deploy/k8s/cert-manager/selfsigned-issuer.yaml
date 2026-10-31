@@ -1,0 +1,8 @@
+# Local TLS: cert-manager signs the ingress certificate itself (browser warning expected).
+# Production uses Let's Encrypt ClusterIssuers instead (values-production.yaml).
+apiVersion: cert-manager.io/v1
+kind: ClusterIssuer
+metadata:
+  name: carevoice-selfsigned
+spec:
+  selfSigned: {}

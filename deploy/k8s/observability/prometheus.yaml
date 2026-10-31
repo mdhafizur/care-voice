@@ -1,0 +1,62 @@
+# Kubernetes variant of deploy/prometheus/prometheus.yaml (same OTLP settings, Kubernetes scrape targets).
+# Replaces /otel-lgtm/prometheus.yaml in grafana/otel-lgtm:0.37.0 (mount documented in the otel-lgtm README,
+# "Customize backend configuration"). The first part is a copy of the image's file (OTLP ingestion settings);
+# CareVoice adds scrape_configs. The image already starts Prometheus with --enable-feature=exemplar-storage.
+global:
+  scrape_interval: 15s
+  scrape_native_histograms: true
+otlp:
+  keep_identifying_resource_attributes: true
+  promote_resource_attributes:
+    - service.instance.id
+    - service.name
+    - service.namespace
+    - service.version
+    - cloud.availability_zone
+    - cloud.region
+    - container.name
+    - deployment.environment
+    - deployment.environment.name
+    - k8s.cluster.name
+    - k8s.container.name
+    - k8s.cronjob.name
+    - k8s.daemonset.name
+    - k8s.deployment.name
+    - k8s.job.name
+    - k8s.namespace.name
+    - k8s.node.name
+    - k8s.pod.name
+    - k8s.replicaset.name
+    - k8s.statefulset.name
+    - host.name
+storage:
+  tsdb:
+    out_of_order_time_window: 10m
+
+scrape_configs:
+  # RabbitMQ Prometheus plugin on every node (headless Service of the RabbitMQ Cluster Operator).
+  - job_name: rabbitmq
+    metrics_path: /metrics/per-object
+    dns_sd_configs:
+      - names: ["carevoice-rabbitmq-nodes.carevoice.svc.cluster.local"]
+        type: A
+        port: 15692
+
+  # Micrometer /metrics of every replica. The headless Services in scrape-targets.yaml return one A record per ready
+  # pod, so new HPA replicas are scraped automatically. service_name matches the OTLP label used by the dashboard.
+  - job_name: documentation-service
+    dns_sd_configs:
+      - names: ["documentation-service-metrics.carevoice.svc.cluster.local"]
+        type: A
+        port: 8080
+    relabel_configs:
+      - target_label: service_name
+        replacement: documentation-service
+  - job_name: alert-service
+    dns_sd_configs:
+      - names: ["alert-service-metrics.carevoice.svc.cluster.local"]
+        type: A
+        port: 8081
+    relabel_configs:
+      - target_label: service_name
+        replacement: alert-service

@@ -1,0 +1,44 @@
+# PostgreSQL for documentation-service, run by the CloudNativePG operator: primary + streaming replica with automatic
+# failover. Services: carevoice-pg-rw (primary, used by the migration Job), carevoice-pg-ro, carevoice-pg-r.
+# The app user's credentials come from the Secret carevoice-pg-app (created by make k8s-up from .env).
+apiVersion: postgresql.cnpg.io/v1
+kind: Cluster
+metadata:
+  name: carevoice-pg
+spec:
+  instances: 2
+  # Pinned (and pre-loaded into the nodes by make k8s-up); the operator default changes with operator upgrades.
+  imageName: ghcr.io/cloudnative-pg/postgresql:18.6-system-trixie
+  storage:
+    size: 1Gi
+  resources:
+    requests: { cpu: 100m, memory: 256Mi }
+    limits: { memory: 512Mi }
+  postgresql:
+    parameters:
+      max_connections: "100"
+  bootstrap:
+    initdb:
+      database: carevoice
+      owner: carevoice
+      secret:
+        name: carevoice-pg-app
+---
+# PgBouncer in transaction mode in front of the primary (CONTRACTS section 14, ADR-0016). The application connects to
+# carevoice-pg-pooler-rw; many small Hikari pools share a few real Postgres connections.
+apiVersion: postgresql.cnpg.io/v1
+kind: Pooler
+metadata:
+  name: carevoice-pg-pooler-rw
+spec:
+  cluster:
+    name: carevoice-pg
+  instances: 2
+  type: rw
+  pgbouncer:
+    poolMode: transaction
+    parameters:
+      max_client_conn: "500"
+      default_pool_size: "20"
+      # PgBouncer >= 1.21 tracks prepared statements in transaction mode, so the JDBC driver can keep using them.
+      max_prepared_statements: "100"

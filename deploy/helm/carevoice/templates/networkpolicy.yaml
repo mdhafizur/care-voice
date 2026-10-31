@@ -1,0 +1,145 @@
+{{- /*
+Zero-trust networking for the release: deny everything, then allow exactly the flows CareVoice needs.
+  ingress controller -> documentation-service:8080
+  documentation-service -> alert-service:8081, Postgres (pooler + primary), Redis (+ Sentinel), RabbitMQ
+  alert-service -> MongoDB, RabbitMQ
+  both -> DNS, OTLP collector; metrics scraper -> both
+The policies select pods by app.kubernetes.io/name, so the migration Job pods (same name label) get the same egress.
+Kubelet probes come from the node and are not subject to these policies.
+*/}}
+{{- if .Values.networkPolicy.enabled }}
+{{- $np := .Values.networkPolicy }}
+{{- $doc := .Values.services.documentation }}
+{{- $alert := .Values.services.alert }}
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: carevoice-default-deny
+  labels:
+    {{- include "carevoice.commonLabels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/part-of: carevoice
+      app.kubernetes.io/instance: {{ .Release.Name }}
+  policyTypes: [Ingress, Egress]
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: carevoice-allow-dns
+  labels:
+    {{- include "carevoice.commonLabels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/part-of: carevoice
+      app.kubernetes.io/instance: {{ .Release.Name }}
+  policyTypes: [Egress]
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - { protocol: UDP, port: 53 }
+        - { protocol: TCP, port: 53 }
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ $doc.name }}
+  labels:
+    {{- include "carevoice.labels" (dict "root" $ "svc" $doc) | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "carevoice.selectorLabels" (dict "root" $ "svc" $doc) | nindent 6 }}
+  policyTypes: [Ingress, Egress]
+  ingress:
+    # Public traffic, only through the ingress controller.
+    - from:
+        - namespaceSelector:
+            {{- toYaml $np.ingressController.namespaceSelector | nindent 12 }}
+          podSelector:
+            {{- toYaml $np.ingressController.podSelector | nindent 12 }}
+      ports:
+        - { protocol: TCP, port: {{ $doc.port }} }
+    # Prometheus scraping /metrics.
+    - from:
+        - namespaceSelector:
+            {{- toYaml $np.metricsScraper.namespaceSelector | nindent 12 }}
+      ports:
+        - { protocol: TCP, port: {{ $doc.port }} }
+  egress:
+    - to:
+        - podSelector:
+            matchLabels:
+              {{- include "carevoice.selectorLabels" (dict "root" $ "svc" $alert) | nindent 14 }}
+      ports:
+        - { protocol: TCP, port: {{ $alert.port }} }
+    {{- range $peer := list "postgres" "redis" "rabbitmq" "otel" }}
+    {{- $p := index $np $peer }}
+    - to:
+        {{- toYaml $p.to | nindent 8 }}
+      ports:
+        {{- range $port := $p.ports }}
+        - { protocol: TCP, port: {{ $port }} }
+        {{- end }}
+    {{- end }}
+    {{- if $np.aiApi.enabled }}
+    - to:
+        {{- toYaml $np.aiApi.to | nindent 8 }}
+      ports:
+        {{- range $port := $np.aiApi.ports }}
+        - { protocol: TCP, port: {{ $port }} }
+        {{- end }}
+    {{- end }}
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ $alert.name }}
+  labels:
+    {{- include "carevoice.labels" (dict "root" $ "svc" $alert) | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "carevoice.selectorLabels" (dict "root" $ "svc" $alert) | nindent 6 }}
+  policyTypes: [Ingress, Egress]
+  ingress:
+    # Only documentation-service (HTTP event transport) calls the API.
+    - from:
+        - podSelector:
+            matchLabels:
+              {{- include "carevoice.selectorLabels" (dict "root" $ "svc" $doc) | nindent 14 }}
+      ports:
+        - { protocol: TCP, port: {{ $alert.port }} }
+    - from:
+        - namespaceSelector:
+            {{- toYaml $np.metricsScraper.namespaceSelector | nindent 12 }}
+      ports:
+        - { protocol: TCP, port: {{ $alert.port }} }
+  egress:
+    {{- range $peer := list "mongo" "rabbitmq" "otel" }}
+    {{- $p := index $np $peer }}
+    - to:
+        {{- toYaml $p.to | nindent 8 }}
+      ports:
+        {{- range $port := $p.ports }}
+        - { protocol: TCP, port: {{ $port }} }
+        {{- end }}
+    {{- end }}
+    {{- if $np.aiApi.enabled }}
+    # Guidance providers (Claude, Gemini, Voyage) when GUIDANCE_AI_ENABLED or a semantic embedder is configured.
+    - to:
+        {{- toYaml $np.aiApi.to | nindent 8 }}
+      ports:
+        {{- range $port := $np.aiApi.ports }}
+        - { protocol: TCP, port: {{ $port }} }
+        {{- end }}
+    {{- end }}
+{{- end }}

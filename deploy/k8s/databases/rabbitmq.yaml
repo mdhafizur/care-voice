@@ -1,0 +1,18 @@
+# RabbitMQ 3-node cluster, run by the RabbitMQ Cluster Operator. Quorum queues replicate across the nodes (Raft).
+# Creates Service carevoice-rabbitmq (5672 AMQP, 15672 management, 15692 Prometheus) and the Secret
+# carevoice-rabbitmq-default-user (username/password) that both services read. The apps declare their own
+# exchanges and queues at startup.
+apiVersion: rabbitmq.com/v1beta1
+kind: RabbitmqCluster
+metadata:
+  name: carevoice-rabbitmq
+spec:
+  replicas: 3
+  resources:
+    requests: { cpu: 100m, memory: 512Mi }
+    limits: { memory: 512Mi }
+  persistence:
+    storage: 1Gi
+  rabbitmq:
+    additionalConfig: |
+      vm_memory_high_watermark.relative = 0.6

@@ -1,0 +1,20 @@
+{{- range $key, $svc := .Values.services }}
+{{- if $svc.pdb.enabled }}
+---
+# Voluntary disruptions (node drains, cluster upgrades) always leave at least one ready pod.
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: {{ $svc.name }}
+  labels:
+    {{- include "carevoice.labels" (dict "root" $ "svc" $svc) | nindent 4 }}
+spec:
+  minAvailable: {{ $svc.pdb.minAvailable }}
+  # A pod that is not ready yet may be evicted even when the budget is exhausted (avoids a stuck drain).
+  unhealthyPodEvictionPolicy: AlwaysAllow
+  selector:
+    matchLabels:
+      {{- include "carevoice.selectorLabels" (dict "root" $ "svc" $svc) | nindent 6 }}
+      app.kubernetes.io/component: server
+{{- end }}
+{{- end }}

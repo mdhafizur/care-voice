@@ -1,0 +1,116 @@
+# MongoDB replica set rs0 with 3 members for alert-service (writeConcern majority survives losing one member).
+# Plain StatefulSet instead of an operator or the Bitnami chart. Local demo: no authentication (the chart's production
+# values add a MongoDB user); only pods allowed by alert-service's NetworkPolicy talk to it.
+apiVersion: v1
+kind: Service
+metadata:
+  name: carevoice-mongodb-headless
+  labels:
+    app.kubernetes.io/name: mongodb
+    app.kubernetes.io/instance: carevoice-mongodb
+spec:
+  clusterIP: None
+  # Members must resolve each other before they are ready, otherwise rs.initiate cannot reach them.
+  publishNotReadyAddresses: true
+  selector:
+    app.kubernetes.io/instance: carevoice-mongodb
+  ports:
+    - name: mongodb
+      port: 27017
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: carevoice-mongodb
+  labels:
+    app.kubernetes.io/name: mongodb
+    app.kubernetes.io/instance: carevoice-mongodb
+spec:
+  serviceName: carevoice-mongodb-headless
+  replicas: 3
+  podManagementPolicy: Parallel
+  selector:
+    matchLabels:
+      app.kubernetes.io/instance: carevoice-mongodb
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: mongodb
+        app.kubernetes.io/instance: carevoice-mongodb
+    spec:
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: kubernetes.io/hostname
+          whenUnsatisfiable: ScheduleAnyway
+          labelSelector:
+            matchLabels:
+              app.kubernetes.io/instance: carevoice-mongodb
+      containers:
+        - name: mongod
+          image: mongo:8.0
+          args: ["mongod", "--replSet", "rs0", "--bind_ip_all", "--wiredTigerCacheSizeGB", "0.25"]
+          ports:
+            - name: mongodb
+              containerPort: 27017
+          readinessProbe:
+            exec:
+              command: ["mongosh", "--quiet", "--eval", "quit(db.adminCommand('ping').ok === 1 ? 0 : 1)"]
+            periodSeconds: 10
+            timeoutSeconds: 5
+          resources:
+            requests: { cpu: 100m, memory: 256Mi }
+            limits: { memory: 512Mi }
+          volumeMounts:
+            - name: data
+              mountPath: /data/db
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        resources:
+          requests:
+            storage: 1Gi
+---
+# One-shot: initiate rs0 with all three members (idempotent: does nothing when the set already exists).
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: carevoice-mongodb-rs-init
+spec:
+  backoffLimit: 20
+  template:
+    spec:
+      restartPolicy: OnFailure
+      containers:
+        - name: rs-init
+          image: mongo:8.0
+          command:
+            - mongosh
+            - --host
+            - carevoice-mongodb-0.carevoice-mongodb-headless:27017
+            - --quiet
+            - --eval
+            - |
+              const hosts = [0, 1, 2].map(i => `carevoice-mongodb-${i}.carevoice-mongodb-headless:27017`);
+              for (const h of hosts) {
+                let ok = false;
+                for (let i = 0; i < 60 && !ok; i++) {
+                  try { ok = new Mongo(h).getDB('admin').runCommand({ ping: 1 }).ok === 1; } catch (e) { sleep(2000); }
+                }
+                if (!ok) throw new Error(`${h} not reachable`);
+              }
+              try {
+                rs.status();
+                print('replica set rs0 already initiated');
+              } catch (e) {
+                if (e.codeName !== 'NotYetInitialized' && e.code !== 94) throw e;
+                rs.initiate({ _id: 'rs0', members: hosts.map((host, i) => ({ _id: i, host })) });
+                print('replica set rs0 initiated');
+              }
+              let waited = 0;
+              while (!db.hello().primary) {
+                if (++waited > 90) throw new Error('rs0 has no primary after 90 s');
+                sleep(1000);
+              }
+              print(`primary: ${db.hello().primary}`);

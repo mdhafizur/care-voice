@@ -1,0 +1,25 @@
+# Overrides of deploy/helm/carevoice/values.yaml for the local k3d cluster (make k8s-up), matching the demo databases
+# in deploy/k8s/databases: single Redis instead of Sentinel, MongoDB replica set without authentication.
+# Production keeps the chart defaults (Sentinel, MongoDB user) plus values-production.yaml.
+
+services:
+  documentation:
+    config:
+      REDIS_URL: redis://carevoice-redis:6379
+  alert:
+    # Replaces the whole env list (Helm replaces lists): no MongoDB credentials locally.
+    env:
+      - name: MONGO_URI
+        value: mongodb://carevoice-mongodb-0.carevoice-mongodb-headless:27017,carevoice-mongodb-1.carevoice-mongodb-headless:27017,carevoice-mongodb-2.carevoice-mongodb-headless:27017/?replicaSet=rs0
+      - name: RABBITMQ_USER
+        valueFrom:
+          secretKeyRef: { name: carevoice-rabbitmq-default-user, key: username }
+      - name: RABBITMQ_PASSWORD
+        valueFrom:
+          secretKeyRef: { name: carevoice-rabbitmq-default-user, key: password }
+      - name: RABBITMQ_URL
+        value: amqp://$(RABBITMQ_USER):$(RABBITMQ_PASSWORD)@carevoice-rabbitmq:5672
+
+networkPolicy:
+  redis:
+    ports: [6379]

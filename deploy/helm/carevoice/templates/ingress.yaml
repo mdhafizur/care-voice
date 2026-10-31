@@ -1,0 +1,37 @@
+{{- /* Only documentation-service is exposed (CONTRACTS section 14); alert-service stays cluster-internal. */}}
+{{- if .Values.ingress.enabled }}
+{{- $svc := .Values.services.documentation }}
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: {{ $svc.name }}
+  labels:
+    {{- include "carevoice.labels" (dict "root" $ "svc" $svc) | nindent 4 }}
+  annotations:
+    {{- if .Values.ingress.tls.enabled }}
+    # cert-manager's ingress-shim creates the Certificate and keeps the TLS secret renewed.
+    cert-manager.io/cluster-issuer: {{ .Values.ingress.tls.clusterIssuer | quote }}
+    {{- end }}
+    {{- with .Values.ingress.annotations }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+spec:
+  ingressClassName: {{ .Values.ingress.className }}
+  {{- if .Values.ingress.tls.enabled }}
+  tls:
+    - hosts:
+        - {{ .Values.ingress.host | quote }}
+      secretName: {{ .Values.ingress.tls.secretName }}
+  {{- end }}
+  rules:
+    - host: {{ .Values.ingress.host | quote }}
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ $svc.name }}
+                port:
+                  name: http
+{{- end }}

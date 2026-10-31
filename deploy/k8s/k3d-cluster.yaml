@@ -1,0 +1,46 @@
+# Local Kubernetes cluster as code: `make k8s-up` creates it, `make k8s-down` deletes it.
+# 1 server + 2 agents in two fake zones, so topology spread, anti-affinity and PodDisruptionBudgets have an effect.
+# k3s ships Traefik (ingress) and metrics-server (HPA) and enforces NetworkPolicies (kube-router).
+# Ports avoid the docker compose stack (80/8000/8080/8081/3000), so both can run side by side.
+apiVersion: k3d.io/v1alpha5
+kind: Simple
+metadata:
+  name: carevoice
+servers: 1
+agents: 2
+ports:
+  - port: 127.0.0.1:9080:80     # http://carevoice.127.0.0.1.nip.io:9080
+    nodeFilters: [loadbalancer]
+  - port: 127.0.0.1:9443:443    # https://carevoice.127.0.0.1.nip.io:9443 (self-signed)
+    nodeFilters: [loadbalancer]
+# Pull-through caches (created by scripts/k8s-up.sh before the cluster, kept by k8s-down): every image is downloaded
+# from the internet once and then served from this machine, also after the cluster is deleted and recreated.
+registries:
+  use:
+    - k3d-carevoice-cache-dockerio:5000
+    - k3d-carevoice-cache-ghcr:5000
+    - k3d-carevoice-cache-quay:5000
+  config: |
+    mirrors:
+      "docker.io":
+        endpoint:
+          - http://k3d-carevoice-cache-dockerio:5000
+      "ghcr.io":
+        endpoint:
+          - http://k3d-carevoice-cache-ghcr:5000
+      "quay.io":
+        endpoint:
+          - http://k3d-carevoice-cache-quay:5000
+options:
+  k3d:
+    wait: true
+    timeout: "180s"
+  k3s:
+    nodeLabels:
+      - label: topology.kubernetes.io/zone=zone-a
+        nodeFilters: [server:0, agent:0]
+      - label: topology.kubernetes.io/zone=zone-b
+        nodeFilters: [agent:1]
+  kubeconfig:
+    updateDefaultKubeconfig: true
+    switchCurrentContext: true

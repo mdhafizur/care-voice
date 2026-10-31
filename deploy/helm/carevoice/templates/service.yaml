@@ -1,0 +1,20 @@
+{{- range $key, $svc := .Values.services }}
+---
+# ClusterIP; the name is the DNS name the other service uses (e.g. ALERT_SERVICE_URL=http://alert-service:8081).
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ $svc.name }}
+  labels:
+    {{- include "carevoice.labels" (dict "root" $ "svc" $svc) | nindent 4 }}
+spec:
+  type: ClusterIP
+  selector:
+    {{- include "carevoice.selectorLabels" (dict "root" $ "svc" $svc) | nindent 4 }}
+    app.kubernetes.io/component: server
+  ports:
+    - name: http
+      port: {{ $svc.port }}
+      targetPort: http
+      protocol: TCP
+{{- end }}

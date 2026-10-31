@@ -1,0 +1,27 @@
+# Headless Services (namespace carevoice) that list every service replica for Prometheus' DNS discovery
+# (observability/prometheus.yaml). The chart's NetworkPolicies allow scraping from the observability namespace.
+apiVersion: v1
+kind: Service
+metadata:
+  name: documentation-service-metrics
+spec:
+  clusterIP: None
+  selector:
+    app.kubernetes.io/name: documentation-service
+    app.kubernetes.io/component: server
+  ports:
+    - name: http
+      port: 8080
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: alert-service-metrics
+spec:
+  clusterIP: None
+  selector:
+    app.kubernetes.io/name: alert-service
+    app.kubernetes.io/component: server
+  ports:
+    - name: http
+      port: 8081
