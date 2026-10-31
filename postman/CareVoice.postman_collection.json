@@ -1,0 +1,3363 @@
+{
+  "info": {
+    "name": "CareVoice",
+    "description": "Demo requests for documentation-service and alert-service, in demo order.\n\n1. `make up-fast` (or `make up`), wait for `make ps` to show healthy.\n2. Set `demoPassword` to DEMO_PASSWORD from your .env.\n3. Run folder 01 Auth first, then the others in order, or run the whole collection with the Collection Runner.\n\nEvery request sends a fresh X-Request-Id; find it in the response and search for it in Grafana (Loki) to see the logs and trace of that request.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "event": [
+    {
+      "listen": "prerequest",
+      "script": {
+        "type": "text/javascript",
+        "exec": [
+          "// Correlation id for every request: search for it in Grafana logs/traces.",
+          "pm.request.headers.upsert({ key: 'X-Request-Id', value: pm.variables.replaceIn('{{$guid}}') });"
+        ]
+      }
+    },
+    {
+      "listen": "test",
+      "script": {
+        "type": "text/javascript",
+        "exec": [
+          "pm.test('echoes X-Request-Id', () => pm.expect(pm.response.headers.get('X-Request-Id')).to.be.ok);"
+        ]
+      }
+    }
+  ],
+  "variable": [
+    {
+      "key": "docBaseUrl",
+      "value": "http://localhost:8080"
+    },
+    {
+      "key": "alertBaseUrl",
+      "value": "http://localhost:8081"
+    },
+    {
+      "key": "demoPassword",
+      "value": "demo-password-change-me",
+      "description": "DEMO_PASSWORD from .env"
+    },
+    {
+      "key": "residentId",
+      "value": "res-1"
+    },
+    {
+      "key": "nurseToken",
+      "value": ""
+    },
+    {
+      "key": "leadToken",
+      "value": ""
+    },
+    {
+      "key": "otherWardToken",
+      "value": ""
+    },
+    {
+      "key": "idempotencyKey",
+      "value": ""
+    },
+    {
+      "key": "transcriptId",
+      "value": ""
+    },
+    {
+      "key": "residentEtag",
+      "value": ""
+    },
+    {
+      "key": "reviewObservationId",
+      "value": ""
+    },
+    {
+      "key": "reviewVersion",
+      "value": ""
+    },
+    {
+      "key": "reviewEtag",
+      "value": ""
+    },
+    {
+      "key": "nextCursor",
+      "value": ""
+    },
+    {
+      "key": "alertId",
+      "value": ""
+    },
+    {
+      "key": "alertEtag",
+      "value": ""
+    },
+    {
+      "key": "scenarioResidentId",
+      "value": "res-2",
+      "description": "Resident used by folder 07 (ward-a)"
+    },
+    {
+      "key": "scenarioAlerts",
+      "value": "{}",
+      "description": "Folder 07: observation id → expected alert rule (null = none)"
+    }
+  ],
+  "item": [
+    {
+      "name": "00 Health and docs",
+      "description": "No authentication. /livez = process up (restart if failing), /readyz = dependencies reachable (take out of the load balancer if failing).",
+      "item": [
+        {
+          "name": "documentation-service /livez",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{docBaseUrl}}/livez",
+            "auth": {
+              "type": "noauth"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 200\", () => pm.response.to.have.status(200));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "documentation-service /readyz",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{docBaseUrl}}/readyz",
+            "auth": {
+              "type": "noauth"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 200\", () => pm.response.to.have.status(200));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "alert-service /readyz",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{alertBaseUrl}}/readyz",
+            "auth": {
+              "type": "noauth"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 200\", () => pm.response.to.have.status(200));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "OpenAPI spec (documentation-service)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{docBaseUrl}}/openapi.yaml",
+            "auth": {
+              "type": "noauth"
+            },
+            "description": "Swagger UI: open {{docBaseUrl}}/docs in a browser."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 200\", () => pm.response.to.have.status(200));"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "01 Auth",
+      "description": "Run these first: they store nurseToken (nurse.anna, ward-a), leadToken (lead.clara, ward-a) and otherWardToken (nurse.ben, ward-b).",
+      "item": [
+        {
+          "name": "Login nurse.anna",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{docBaseUrl}}/v1/auth/token",
+            "auth": {
+              "type": "noauth"
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"username\": \"nurse.anna\",\n  \"password\": \"{{demoPassword}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 200\", () => pm.response.to.have.status(200));",
+                  "const json = pm.response.json();",
+                  "pm.test(\"returns a bearer token\", () => pm.expect(json.tokenType).to.eql(\"Bearer\"));",
+                  "pm.collectionVariables.set(\"nurseToken\", json.accessToken);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Login lead.clara",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{docBaseUrl}}/v1/auth/token",
+            "auth": {
+              "type": "noauth"
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"username\": \"lead.clara\",\n  \"password\": \"{{demoPassword}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 200\", () => pm.response.to.have.status(200));",
+                  "const json = pm.response.json();",
+                  "pm.test(\"returns a bearer token\", () => pm.expect(json.tokenType).to.eql(\"Bearer\"));",
+                  "pm.collectionVariables.set(\"leadToken\", json.accessToken);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Login nurse.ben",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{docBaseUrl}}/v1/auth/token",
+            "auth": {
+              "type": "noauth"
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"username\": \"nurse.ben\",\n  \"password\": \"{{demoPassword}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 200\", () => pm.response.to.have.status(200));",
+                  "const json = pm.response.json();",
+                  "pm.test(\"returns a bearer token\", () => pm.expect(json.tokenType).to.eql(\"Bearer\"));",
+                  "pm.collectionVariables.set(\"otherWardToken\", json.accessToken);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Login with a wrong password → 401",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{docBaseUrl}}/v1/auth/token",
+            "auth": {
+              "type": "noauth"
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"username\": \"nurse.anna\",\n  \"password\": \"wrong-password\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "description": "Same 401 and the same response time for an unknown user and a wrong password: no user enumeration."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 401\", () => pm.response.to.have.status(401));",
+                  "pm.test(\"body is RFC 9457 problem+json\", () => {",
+                  "  pm.expect(pm.response.headers.get(\"Content-Type\")).to.include(\"application/problem+json\");",
+                  "  pm.expect(pm.response.json().status).to.eql(401);",
+                  "});"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "02 Residents",
+      "item": [
+        {
+          "name": "Get resident",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{docBaseUrl}}/v1/residents/{{residentId}}",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{nurseToken}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "description": "Display name is stored AES-GCM encrypted and decrypted here; cached with Caffeine."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 200\", () => pm.response.to.have.status(200));",
+                  "pm.test(\"has an ETag\", () => pm.expect(pm.response.headers.get(\"ETag\")).to.be.ok);",
+                  "pm.collectionVariables.set(\"residentEtag\", pm.response.headers.get(\"ETag\"));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Get resident again with If-None-Match → 304",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "If-None-Match",
+                "value": "{{residentEtag}}"
+              }
+            ],
+            "url": "{{docBaseUrl}}/v1/residents/{{residentId}}",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{nurseToken}}",
+                  "type": "string"
+                }
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 304\", () => pm.response.to.have.status(304));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Get resident from another ward → 404 (not 403)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{docBaseUrl}}/v1/residents/{{residentId}}",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{otherWardToken}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "description": "nurse.ben works in ward-b; res-1 is in ward-a. 404, so the resident's existence is not revealed."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 404\", () => pm.response.to.have.status(404));",
+                  "pm.test(\"body is RFC 9457 problem+json\", () => {",
+                  "  pm.expect(pm.response.headers.get(\"Content-Type\")).to.include(\"application/problem+json\");",
+                  "  pm.expect(pm.response.json().status).to.eql(404);",
+                  "});"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "03 Transcripts",
+      "description": "The core flow. Each submit generates a new Idempotency-Key in its pre-request script; the replay requests reuse it.",
+      "item": [
+        {
+          "name": "Submit transcript (confident values) → 201",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Idempotency-Key",
+                "value": "{{idempotencyKey}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{docBaseUrl}}/v1/residents/{{residentId}}/transcripts",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{nurseToken}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"transcript\": \"Mrs. Smith, blood pressure 120 over 75, pulse 80, temperature 37.2 degrees\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.collectionVariables.set(\"idempotencyKey\", pm.variables.replaceIn(\"{{$guid}}\"));"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 201\", () => pm.response.to.have.status(201));",
+                  "const json = pm.response.json();",
+                  "pm.collectionVariables.set(\"transcriptId\", json.transcriptId);",
+                  "pm.test(\"Location header points to the transcript\", () => pm.expect(pm.response.headers.get(\"Location\")).to.include(json.transcriptId));",
+                  "pm.test(\"all values CONFIRMED by the rules\", () => json.observations.forEach(o => pm.expect(o.status).to.eql(\"CONFIRMED\")));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Replay with the same key and body → 200 (idempotent)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Idempotency-Key",
+                "value": "{{idempotencyKey}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{docBaseUrl}}/v1/residents/{{residentId}}/transcripts",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{nurseToken}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"transcript\": \"Mrs. Smith, blood pressure 120 over 75, pulse 80, temperature 37.2 degrees\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "description": "The phone lost the 201 and retried. The stored response is returned; nothing is saved twice."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 200\", () => pm.response.to.have.status(200));",
+                  "pm.test(\"Idempotent-Replayed: true\", () => pm.expect(pm.response.headers.get(\"Idempotent-Replayed\")).to.eql(\"true\"));",
+                  "pm.test(\"same transcript as the original\", () => pm.expect(pm.response.json().transcriptId).to.eql(pm.collectionVariables.get(\"transcriptId\")));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Same key, different body → 409",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Idempotency-Key",
+                "value": "{{idempotencyKey}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{docBaseUrl}}/v1/residents/{{residentId}}/transcripts",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{nurseToken}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"transcript\": \"Mrs. Smith, pulse 95\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 409\", () => pm.response.to.have.status(409));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Get transcript",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{docBaseUrl}}/v1/transcripts/{{transcriptId}}",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{nurseToken}}",
+                  "type": "string"
+                }
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 200\", () => pm.response.to.have.status(200));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Submit a critical blood pressure → 201 (raises an alert)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Idempotency-Key",
+                "value": "{{idempotencyKey}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{docBaseUrl}}/v1/residents/{{residentId}}/transcripts",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{nurseToken}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"transcript\": \"Mrs. Smith, blood pressure 185 over 95, pulse 88\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "description": "185 systolic matches the HYPERTENSIVE_CRISIS rule. The alert is created asynchronously: outbox → RabbitMQ → alert-service → MongoDB. See folder 05."
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.collectionVariables.set(\"idempotencyKey\", pm.variables.replaceIn(\"{{$guid}}\"));"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 201\", () => pm.response.to.have.status(201));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Submit uncertain values → NEEDS_REVIEW",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Idempotency-Key",
+                "value": "{{idempotencyKey}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{docBaseUrl}}/v1/residents/{{residentId}}/transcripts",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{nurseToken}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"transcript\": \"Mr. Jones, 135/85, temperature 101\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "description": "A bare 135/85 without a keyword and 101 without a unit (inferred Fahrenheit) are below the confidence threshold: stored as NEEDS_REVIEW until a nurse confirms."
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.collectionVariables.set(\"idempotencyKey\", pm.variables.replaceIn(\"{{$guid}}\"));"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 201\", () => pm.response.to.have.status(201));",
+                  "const json = pm.response.json();",
+                  "const review = json.observations.find(o => o.status === \"NEEDS_REVIEW\");",
+                  "pm.test(\"at least one value needs review\", () => pm.expect(review).to.be.ok);",
+                  "if (review) { pm.collectionVariables.set(\"reviewObservationId\", review.id); pm.collectionVariables.set(\"reviewVersion\", review.version); }"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Implausible value → rejected, not stored",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Idempotency-Key",
+                "value": "{{idempotencyKey}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{docBaseUrl}}/v1/residents/{{residentId}}/transcripts",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{nurseToken}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"transcript\": \"Mrs. Smith, blood pressure 12 over 10, pulse 80\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.collectionVariables.set(\"idempotencyKey\", pm.variables.replaceIn(\"{{$guid}}\"));"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 201\", () => pm.response.to.have.status(201));",
+                  "pm.test(\"12/10 is listed under rejected\", () => pm.expect(pm.response.json().rejected.length).to.be.above(0));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Blank transcript → 422",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Idempotency-Key",
+                "value": "{{idempotencyKey}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{docBaseUrl}}/v1/residents/{{residentId}}/transcripts",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{nurseToken}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"transcript\": \"   \"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.collectionVariables.set(\"idempotencyKey\", pm.variables.replaceIn(\"{{$guid}}\"));"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 422\", () => pm.response.to.have.status(422));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Missing Idempotency-Key → 400",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{docBaseUrl}}/v1/residents/{{residentId}}/transcripts",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{nurseToken}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"transcript\": \"Mrs. Smith, blood pressure 120 over 75, pulse 80, temperature 37.2 degrees\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 400\", () => pm.response.to.have.status(400));"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "04 Observations",
+      "item": [
+        {
+          "name": "List observations (cursor pagination)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{docBaseUrl}}/v1/residents/{{residentId}}/observations?limit=2",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{nurseToken}}",
+                  "type": "string"
+                }
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 200\", () => pm.response.to.have.status(200));",
+                  "const json = pm.response.json();",
+                  "pm.test(\"X-Total-Count and Link headers\", () => { pm.expect(pm.response.headers.get(\"X-Total-Count\")).to.be.ok; pm.expect(pm.response.headers.get(\"Link\")).to.include(\"rel=\\\"first\\\"\"); });",
+                  "pm.collectionVariables.set(\"nextCursor\", json.nextCursor || \"\");"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "List observations, next page",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{docBaseUrl}}/v1/residents/{{residentId}}/observations?limit=2&cursor={{nextCursor}}",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{nurseToken}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "description": "Keyset pagination: an insert between the two requests neither shifts nor duplicates items."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 200\", () => pm.response.to.have.status(200));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Malformed cursor → 400",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{docBaseUrl}}/v1/residents/{{residentId}}/observations?cursor=not-a-cursor",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{nurseToken}}",
+                  "type": "string"
+                }
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 400\", () => pm.response.to.have.status(400));",
+                  "pm.test(\"body is RFC 9457 problem+json\", () => {",
+                  "  pm.expect(pm.response.headers.get(\"Content-Type\")).to.include(\"application/problem+json\");",
+                  "  pm.expect(pm.response.json().status).to.eql(400);",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "QUERY observations (HTTP QUERY method)",
+          "request": {
+            "method": "QUERY",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{docBaseUrl}}/v1/observations",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{nurseToken}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"residentIds\": [\n    \"{{residentId}}\"\n  ],\n  \"status\": \"NEEDS_REVIEW\",\n  \"limit\": 20\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "description": "QUERY is the new safe, idempotent method with a body. Postman sends custom methods as typed."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 200\", () => pm.response.to.have.status(200));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Search observations (POST fallback for QUERY)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{docBaseUrl}}/v1/observations/search",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{nurseToken}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"vitalTypes\": [\n    \"BLOOD_PRESSURE\"\n  ],\n  \"limit\": 20\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 200\", () => pm.response.to.have.status(200));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Search with recordedFrom after recordedTo → 422",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{docBaseUrl}}/v1/observations/search",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{nurseToken}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"recordedFrom\": \"2026-10-25T12:00:00Z\",\n  \"recordedTo\": \"2026-10-25T10:00:00Z\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 422\", () => pm.response.to.have.status(422));",
+                  "pm.test(\"body is RFC 9457 problem+json\", () => {",
+                  "  pm.expect(pm.response.headers.get(\"Content-Type\")).to.include(\"application/problem+json\");",
+                  "  pm.expect(pm.response.json().status).to.eql(422);",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Confirm with a stale version → 412",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "If-Match",
+                "value": "\"999\""
+              }
+            ],
+            "url": "{{docBaseUrl}}/v1/observations/{{reviewObservationId}}/confirm",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{nurseToken}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "description": "Optimistic locking: someone else changed the observation since this client read it."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 412\", () => pm.response.to.have.status(412));",
+                  "pm.test(\"body is RFC 9457 problem+json\", () => {",
+                  "  pm.expect(pm.response.headers.get(\"Content-Type\")).to.include(\"application/problem+json\");",
+                  "  pm.expect(pm.response.json().status).to.eql(412);",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Confirm without If-Match → 428",
+          "request": {
+            "method": "PATCH",
+            "header": [],
+            "url": "{{docBaseUrl}}/v1/observations/{{reviewObservationId}}/confirm",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{nurseToken}}",
+                  "type": "string"
+                }
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 428\", () => pm.response.to.have.status(428));",
+                  "pm.test(\"body is RFC 9457 problem+json\", () => {",
+                  "  pm.expect(pm.response.headers.get(\"Content-Type\")).to.include(\"application/problem+json\");",
+                  "  pm.expect(pm.response.json().status).to.eql(428);",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Confirm observation → 200",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "If-Match",
+                "value": "\"{{reviewVersion}}\""
+              }
+            ],
+            "url": "{{docBaseUrl}}/v1/observations/{{reviewObservationId}}/confirm",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{nurseToken}}",
+                  "type": "string"
+                }
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 200\", () => pm.response.to.have.status(200));",
+                  "pm.test(\"now CONFIRMED with a new ETag\", () => { pm.expect(pm.response.json().status).to.eql(\"CONFIRMED\"); pm.expect(pm.response.headers.get(\"ETag\")).to.be.ok; });",
+                  "pm.collectionVariables.set(\"reviewEtag\", pm.response.headers.get(\"ETag\"));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Confirm again → 409 (already confirmed)",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "If-Match",
+                "value": "{{reviewEtag}}"
+              }
+            ],
+            "url": "{{docBaseUrl}}/v1/observations/{{reviewObservationId}}/confirm",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{nurseToken}}",
+                  "type": "string"
+                }
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 409\", () => pm.response.to.have.status(409));",
+                  "pm.test(\"body is RFC 9457 problem+json\", () => {",
+                  "  pm.expect(pm.response.headers.get(\"Content-Type\")).to.include(\"application/problem+json\");",
+                  "  pm.expect(pm.response.json().status).to.eql(409);",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Live feed (SSE)",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "text/event-stream"
+              }
+            ],
+            "url": "{{docBaseUrl}}/v1/observations/stream",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{nurseToken}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "description": "Server-Sent Events for the caller's ward. Keep it open, submit a transcript in another tab, and the observation appears. Not part of a Collection Runner run."
+          }
+        }
+      ]
+    },
+    {
+      "name": "05 Alerts (ward lead)",
+      "description": "alert-service. Alerts are created asynchronously; if the list is empty, wait a second and send again.",
+      "item": [
+        {
+          "name": "List open alerts",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{alertBaseUrl}}/v1/alerts?status=OPEN&limit=20",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{leadToken}}",
+                  "type": "string"
+                }
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 200\", () => pm.response.to.have.status(200));",
+                  "const items = pm.response.json().items || [];",
+                  "pm.test(\"the critical blood pressure raised an alert\", () => pm.expect(items.length).to.be.above(0));",
+                  "const alert = items.find(a => a.severity === \"CRITICAL\") || items[0];",
+                  "if (alert) pm.collectionVariables.set(\"alertId\", alert.id);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Get alert",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{alertBaseUrl}}/v1/alerts/{{alertId}}",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{leadToken}}",
+                  "type": "string"
+                }
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 200\", () => pm.response.to.have.status(200));",
+                  "pm.collectionVariables.set(\"alertEtag\", pm.response.headers.get(\"ETag\"));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Protocol guidance for the alert (RAG)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{alertBaseUrl}}/v1/alerts/{{alertId}}/guidance",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{leadToken}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "description": "Retrieval-augmented guidance (ADR-0023): steps from the matching care protocol, each citing the protocol section it comes from. generatedBy is EXTRACTIVE (protocol steps copied) unless GUIDANCE_AI_ENABLED=true, then CLAUDE or GEMINI (AI_PROVIDER). Advisory only: the ward lead decides."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 200\", () => pm.response.to.have.status(200));",
+                  "const json = pm.response.json();",
+                  "pm.test(\"a protocol was found\", () => pm.expect(json.status).to.eql(\"FOUND\"));",
+                  "const ids = json.sources.map(s => s.id);",
+                  "pm.test(\"every step cites a retrieved section\", () => json.steps.forEach(s => s.citations.forEach(c => pm.expect(ids).to.include(c))));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Acknowledge without If-Match → 428",
+          "request": {
+            "method": "PATCH",
+            "header": [],
+            "url": "{{alertBaseUrl}}/v1/alerts/{{alertId}}/acknowledge",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{leadToken}}",
+                  "type": "string"
+                }
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 428\", () => pm.response.to.have.status(428));",
+                  "pm.test(\"body is RFC 9457 problem+json\", () => {",
+                  "  pm.expect(pm.response.headers.get(\"Content-Type\")).to.include(\"application/problem+json\");",
+                  "  pm.expect(pm.response.json().status).to.eql(428);",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Acknowledge alert → 200",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "If-Match",
+                "value": "{{alertEtag}}"
+              }
+            ],
+            "url": "{{alertBaseUrl}}/v1/alerts/{{alertId}}/acknowledge",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{leadToken}}",
+                  "type": "string"
+                }
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 200\", () => pm.response.to.have.status(200));",
+                  "pm.test(\"ACKNOWLEDGED by lead.clara\", () => pm.expect(pm.response.json().status).to.eql(\"ACKNOWLEDGED\"));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Nurse lists alerts → 403",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{alertBaseUrl}}/v1/alerts",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{nurseToken}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "description": "Only WARD_LEAD may read alerts."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 403\", () => pm.response.to.have.status(403));",
+                  "pm.test(\"body is RFC 9457 problem+json\", () => {",
+                  "  pm.expect(pm.response.headers.get(\"Content-Type\")).to.include(\"application/problem+json\");",
+                  "  pm.expect(pm.response.json().status).to.eql(403);",
+                  "});"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "06 Error handling",
+      "item": [
+        {
+          "name": "No token → 401",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{docBaseUrl}}/v1/residents/{{residentId}}",
+            "auth": {
+              "type": "noauth"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 401\", () => pm.response.to.have.status(401));",
+                  "pm.test(\"body is RFC 9457 problem+json\", () => {",
+                  "  pm.expect(pm.response.headers.get(\"Content-Type\")).to.include(\"application/problem+json\");",
+                  "  pm.expect(pm.response.json().status).to.eql(401);",
+                  "});",
+                  "pm.test(\"WWW-Authenticate: Bearer\", () => pm.expect(pm.response.headers.get(\"WWW-Authenticate\")).to.include(\"Bearer\"));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Malformed JSON → 400",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Idempotency-Key",
+                "value": "{{$guid}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{docBaseUrl}}/v1/residents/{{residentId}}/transcripts",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{nurseToken}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\"transcript\": ",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 400\", () => pm.response.to.have.status(400));",
+                  "pm.test(\"body is RFC 9457 problem+json\", () => {",
+                  "  pm.expect(pm.response.headers.get(\"Content-Type\")).to.include(\"application/problem+json\");",
+                  "  pm.expect(pm.response.json().status).to.eql(400);",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Wrong Content-Type → 415",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Idempotency-Key",
+                "value": "{{$guid}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "text/plain"
+              }
+            ],
+            "url": "{{docBaseUrl}}/v1/residents/{{residentId}}/transcripts",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{nurseToken}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "Mrs. Smith, pulse 80"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 415\", () => pm.response.to.have.status(415));",
+                  "pm.test(\"body is RFC 9457 problem+json\", () => {",
+                  "  pm.expect(pm.response.headers.get(\"Content-Type\")).to.include(\"application/problem+json\");",
+                  "  pm.expect(pm.response.json().status).to.eql(415);",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Unknown resident → 404",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{docBaseUrl}}/v1/residents/res-does-not-exist",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{nurseToken}}",
+                  "type": "string"
+                }
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 404\", () => pm.response.to.have.status(404));",
+                  "pm.test(\"body is RFC 9457 problem+json\", () => {",
+                  "  pm.expect(pm.response.headers.get(\"Content-Type\")).to.include(\"application/problem+json\");",
+                  "  pm.expect(pm.response.json().status).to.eql(404);",
+                  "});"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "07 Observation scenarios",
+      "description": "Observation scenarios with assertions: what the rules read, what waits for review, what is never stored, when AI is used, and which values raise which alert. Run folder 01 Auth first, then this folder in order with the Collection Runner (the last request checks the alerts of all earlier ones). Uses resident `{{scenarioResidentId}}` (res-2, Maple Ward), so the demo resident res-1 stays readable. Start from a clean state with `make reset-demo`.",
+      "item": [
+        {
+          "name": "A. Spoken formats the rules understand",
+          "description": "Every way of saying a value that the rule extractors normalize and read with full confidence. All CONFIRMED, source RULES, no AI call.",
+          "item": [
+            {
+              "name": "Blood pressure: \"over\" → 120/80",
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Idempotency-Key",
+                    "value": "{{$guid}}"
+                  },
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": "{{docBaseUrl}}/v1/residents/{{scenarioResidentId}}/transcripts",
+                "auth": {
+                  "type": "bearer",
+                  "bearer": [
+                    {
+                      "key": "token",
+                      "value": "{{nurseToken}}",
+                      "type": "string"
+                    }
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"transcript\": \"BP 120 over 80\"\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                },
+                "description": "The normalizer rewrites \"120 over 80\" to \"120/80\" (only between two digits)."
+              },
+              "event": [
+                {
+                  "listen": "prerequest",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "// First scenario: forget the expectations of an earlier run.",
+                      "pm.collectionVariables.set('scenarioAlerts', '{}');"
+                    ]
+                  }
+                },
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "const json = pm.response.json();",
+                      "const obs = json.observations || [];",
+                      "const rules = obs.filter(o => o.source === 'RULES');",
+                      "const byType = t => rules.filter(o => o.vital.type === t);",
+                      "const remember = (o, rule) => { const m = JSON.parse(pm.collectionVariables.get('scenarioAlerts') || '{}'); m[o.id] = rule; pm.collectionVariables.set('scenarioAlerts', JSON.stringify(m)); };",
+                      "pm.test('status is 201', () => pm.response.to.have.status(201));",
+                      "pm.test('rules extracted exactly 1 value(s)', () => pm.expect(rules).to.have.length(1));",
+                      "const o0 = byType('BLOOD_PRESSURE').find(o => o.vital.systolic === 120 && o.vital.diastolic === 80);",
+                      "pm.test('blood pressure 120/80 is CONFIRMED', () => { pm.expect(o0, 'blood pressure 120/80 not extracted').to.be.ok; pm.expect(o0.status).to.eql('CONFIRMED'); });",
+                      "pm.test('blood pressure 120/80 has confidence 0.95', () => pm.expect(o0.confidence).to.be.closeTo(0.95, 0.001));",
+                      "if (o0) remember(o0, null);"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "Blood pressure: \"slash\" → 130/85",
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Idempotency-Key",
+                    "value": "{{$guid}}"
+                  },
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": "{{docBaseUrl}}/v1/residents/{{scenarioResidentId}}/transcripts",
+                "auth": {
+                  "type": "bearer",
+                  "bearer": [
+                    {
+                      "key": "token",
+                      "value": "{{nurseToken}}",
+                      "type": "string"
+                    }
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"transcript\": \"blood pressure 130 slash 85\"\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                },
+                "description": "\"slash\" is normalized like \"over\"."
+              },
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "const json = pm.response.json();",
+                      "const obs = json.observations || [];",
+                      "const rules = obs.filter(o => o.source === 'RULES');",
+                      "const byType = t => rules.filter(o => o.vital.type === t);",
+                      "const remember = (o, rule) => { const m = JSON.parse(pm.collectionVariables.get('scenarioAlerts') || '{}'); m[o.id] = rule; pm.collectionVariables.set('scenarioAlerts', JSON.stringify(m)); };",
+                      "pm.test('status is 201', () => pm.response.to.have.status(201));",
+                      "pm.test('rules extracted exactly 1 value(s)', () => pm.expect(rules).to.have.length(1));",
+                      "const o0 = byType('BLOOD_PRESSURE').find(o => o.vital.systolic === 130 && o.vital.diastolic === 85);",
+                      "pm.test('blood pressure 130/85 is CONFIRMED', () => { pm.expect(o0, 'blood pressure 130/85 not extracted').to.be.ok; pm.expect(o0.status).to.eql('CONFIRMED'); });",
+                      "pm.test('blood pressure 130/85 has confidence 0.95', () => pm.expect(o0.confidence).to.be.closeTo(0.95, 0.001));",
+                      "if (o0) remember(o0, null);"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "Blood pressure: \"bp: 118/76\"",
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Idempotency-Key",
+                    "value": "{{$guid}}"
+                  },
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": "{{docBaseUrl}}/v1/residents/{{scenarioResidentId}}/transcripts",
+                "auth": {
+                  "type": "bearer",
+                  "bearer": [
+                    {
+                      "key": "token",
+                      "value": "{{nurseToken}}",
+                      "type": "string"
+                    }
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"transcript\": \"bp: 118/76\"\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                },
+                "description": "Abbreviated keyword, punctuation in the short gap between keyword and value."
+              },
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "const json = pm.response.json();",
+                      "const obs = json.observations || [];",
+                      "const rules = obs.filter(o => o.source === 'RULES');",
+                      "const byType = t => rules.filter(o => o.vital.type === t);",
+                      "const remember = (o, rule) => { const m = JSON.parse(pm.collectionVariables.get('scenarioAlerts') || '{}'); m[o.id] = rule; pm.collectionVariables.set('scenarioAlerts', JSON.stringify(m)); };",
+                      "pm.test('status is 201', () => pm.response.to.have.status(201));",
+                      "pm.test('rules extracted exactly 1 value(s)', () => pm.expect(rules).to.have.length(1));",
+                      "const o0 = byType('BLOOD_PRESSURE').find(o => o.vital.systolic === 118 && o.vital.diastolic === 76);",
+                      "pm.test('blood pressure 118/76 is CONFIRMED', () => { pm.expect(o0, 'blood pressure 118/76 not extracted').to.be.ok; pm.expect(o0.status).to.eql('CONFIRMED'); });",
+                      "pm.test('blood pressure 118/76 has confidence 0.95', () => pm.expect(o0.confidence).to.be.closeTo(0.95, 0.001));",
+                      "if (o0) remember(o0, null);"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "Pulse: \"heart rate of 72 bpm\"",
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Idempotency-Key",
+                    "value": "{{$guid}}"
+                  },
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": "{{docBaseUrl}}/v1/residents/{{scenarioResidentId}}/transcripts",
+                "auth": {
+                  "type": "bearer",
+                  "bearer": [
+                    {
+                      "key": "token",
+                      "value": "{{nurseToken}}",
+                      "type": "string"
+                    }
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"transcript\": \"Heart rate of 72 bpm\"\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                },
+                "description": "Keyword alternatives: pulse, heart rate, hr."
+              },
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "const json = pm.response.json();",
+                      "const obs = json.observations || [];",
+                      "const rules = obs.filter(o => o.source === 'RULES');",
+                      "const byType = t => rules.filter(o => o.vital.type === t);",
+                      "const remember = (o, rule) => { const m = JSON.parse(pm.collectionVariables.get('scenarioAlerts') || '{}'); m[o.id] = rule; pm.collectionVariables.set('scenarioAlerts', JSON.stringify(m)); };",
+                      "pm.test('status is 201', () => pm.response.to.have.status(201));",
+                      "pm.test('rules extracted exactly 1 value(s)', () => pm.expect(rules).to.have.length(1));",
+                      "const o0 = byType('PULSE').find(o => o.vital.bpm === 72);",
+                      "pm.test('pulse 72 is CONFIRMED', () => { pm.expect(o0, 'pulse 72 not extracted').to.be.ok; pm.expect(o0.status).to.eql('CONFIRMED'); });",
+                      "pm.test('pulse 72 has confidence 0.95', () => pm.expect(o0.confidence).to.be.closeTo(0.95, 0.001));",
+                      "if (o0) remember(o0, null);"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "Pulse: \"hr 64\"",
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Idempotency-Key",
+                    "value": "{{$guid}}"
+                  },
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": "{{docBaseUrl}}/v1/residents/{{scenarioResidentId}}/transcripts",
+                "auth": {
+                  "type": "bearer",
+                  "bearer": [
+                    {
+                      "key": "token",
+                      "value": "{{nurseToken}}",
+                      "type": "string"
+                    }
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"transcript\": \"hr 64\"\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                },
+                "description": "Whole-word match: \"hr\" never matches inside \"three\"."
+              },
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "const json = pm.response.json();",
+                      "const obs = json.observations || [];",
+                      "const rules = obs.filter(o => o.source === 'RULES');",
+                      "const byType = t => rules.filter(o => o.vital.type === t);",
+                      "const remember = (o, rule) => { const m = JSON.parse(pm.collectionVariables.get('scenarioAlerts') || '{}'); m[o.id] = rule; pm.collectionVariables.set('scenarioAlerts', JSON.stringify(m)); };",
+                      "pm.test('status is 201', () => pm.response.to.have.status(201));",
+                      "pm.test('rules extracted exactly 1 value(s)', () => pm.expect(rules).to.have.length(1));",
+                      "const o0 = byType('PULSE').find(o => o.vital.bpm === 64);",
+                      "pm.test('pulse 64 is CONFIRMED', () => { pm.expect(o0, 'pulse 64 not extracted').to.be.ok; pm.expect(o0.status).to.eql('CONFIRMED'); });",
+                      "pm.test('pulse 64 has confidence 0.95', () => pm.expect(o0.confidence).to.be.closeTo(0.95, 0.001));",
+                      "if (o0) remember(o0, null);"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "Temperature: \"37 point 2 degrees\"",
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Idempotency-Key",
+                    "value": "{{$guid}}"
+                  },
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": "{{docBaseUrl}}/v1/residents/{{scenarioResidentId}}/transcripts",
+                "auth": {
+                  "type": "bearer",
+                  "bearer": [
+                    {
+                      "key": "token",
+                      "value": "{{nurseToken}}",
+                      "type": "string"
+                    }
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"transcript\": \"temperature 37 point 2 degrees\"\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                },
+                "description": "Spoken decimal point is normalized; \"degrees\" at a Celsius magnitude can only mean Celsius."
+              },
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "const json = pm.response.json();",
+                      "const obs = json.observations || [];",
+                      "const rules = obs.filter(o => o.source === 'RULES');",
+                      "const byType = t => rules.filter(o => o.vital.type === t);",
+                      "const remember = (o, rule) => { const m = JSON.parse(pm.collectionVariables.get('scenarioAlerts') || '{}'); m[o.id] = rule; pm.collectionVariables.set('scenarioAlerts', JSON.stringify(m)); };",
+                      "pm.test('status is 201', () => pm.response.to.have.status(201));",
+                      "pm.test('rules extracted exactly 1 value(s)', () => pm.expect(rules).to.have.length(1));",
+                      "const o0 = byType('BODY_TEMPERATURE').find(o => Math.abs(o.vital.celsius - 37.2) < 0.05);",
+                      "pm.test('temperature 37.2 °C is CONFIRMED', () => { pm.expect(o0, 'temperature 37.2 °C not extracted').to.be.ok; pm.expect(o0.status).to.eql('CONFIRMED'); });",
+                      "pm.test('temperature 37.2 °C has confidence 0.95', () => pm.expect(o0.confidence).to.be.closeTo(0.95, 0.001));",
+                      "if (o0) remember(o0, null);"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "Temperature: \"temp 36.8\" (Celsius assumed)",
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Idempotency-Key",
+                    "value": "{{$guid}}"
+                  },
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": "{{docBaseUrl}}/v1/residents/{{scenarioResidentId}}/transcripts",
+                "auth": {
+                  "type": "bearer",
+                  "bearer": [
+                    {
+                      "key": "token",
+                      "value": "{{nurseToken}}",
+                      "type": "string"
+                    }
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"transcript\": \"temp 36.8\"\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                },
+                "description": "No unit, but only Celsius is plausible at this magnitude: confidence 0.9, above the 0.8 review threshold."
+              },
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "const json = pm.response.json();",
+                      "const obs = json.observations || [];",
+                      "const rules = obs.filter(o => o.source === 'RULES');",
+                      "const byType = t => rules.filter(o => o.vital.type === t);",
+                      "const remember = (o, rule) => { const m = JSON.parse(pm.collectionVariables.get('scenarioAlerts') || '{}'); m[o.id] = rule; pm.collectionVariables.set('scenarioAlerts', JSON.stringify(m)); };",
+                      "pm.test('status is 201', () => pm.response.to.have.status(201));",
+                      "pm.test('rules extracted exactly 1 value(s)', () => pm.expect(rules).to.have.length(1));",
+                      "const o0 = byType('BODY_TEMPERATURE').find(o => Math.abs(o.vital.celsius - 36.8) < 0.05);",
+                      "pm.test('temperature 36.8 °C is CONFIRMED', () => { pm.expect(o0, 'temperature 36.8 °C not extracted').to.be.ok; pm.expect(o0.status).to.eql('CONFIRMED'); });",
+                      "pm.test('temperature 36.8 °C has confidence 0.9', () => pm.expect(o0.confidence).to.be.closeTo(0.9, 0.001));",
+                      "if (o0) remember(o0, null);"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "Temperature: \"98.6 degrees fahrenheit\" → 37.0 °C",
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Idempotency-Key",
+                    "value": "{{$guid}}"
+                  },
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": "{{docBaseUrl}}/v1/residents/{{scenarioResidentId}}/transcripts",
+                "auth": {
+                  "type": "bearer",
+                  "bearer": [
+                    {
+                      "key": "token",
+                      "value": "{{nurseToken}}",
+                      "type": "string"
+                    }
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"transcript\": \"temperature 98.6 degrees fahrenheit\"\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                },
+                "description": "A named Fahrenheit scale is explicit: converted to Celsius, the only unit the domain stores."
+              },
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "const json = pm.response.json();",
+                      "const obs = json.observations || [];",
+                      "const rules = obs.filter(o => o.source === 'RULES');",
+                      "const byType = t => rules.filter(o => o.vital.type === t);",
+                      "const remember = (o, rule) => { const m = JSON.parse(pm.collectionVariables.get('scenarioAlerts') || '{}'); m[o.id] = rule; pm.collectionVariables.set('scenarioAlerts', JSON.stringify(m)); };",
+                      "pm.test('status is 201', () => pm.response.to.have.status(201));",
+                      "pm.test('rules extracted exactly 1 value(s)', () => pm.expect(rules).to.have.length(1));",
+                      "const o0 = byType('BODY_TEMPERATURE').find(o => Math.abs(o.vital.celsius - 37.0) < 0.05);",
+                      "pm.test('temperature 37.0 °C is CONFIRMED', () => { pm.expect(o0, 'temperature 37.0 °C not extracted').to.be.ok; pm.expect(o0.status).to.eql('CONFIRMED'); });",
+                      "pm.test('temperature 37.0 °C has confidence 0.95', () => pm.expect(o0.confidence).to.be.closeTo(0.95, 0.001));",
+                      "if (o0) remember(o0, null);"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "Three values in one sentence",
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Idempotency-Key",
+                    "value": "{{$guid}}"
+                  },
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": "{{docBaseUrl}}/v1/residents/{{scenarioResidentId}}/transcripts",
+                "auth": {
+                  "type": "bearer",
+                  "bearer": [
+                    {
+                      "key": "token",
+                      "value": "{{nurseToken}}",
+                      "type": "string"
+                    }
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"transcript\": \"Mrs. Smith, BP 140 over 90, pulse 76, temp 37.4\"\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                },
+                "description": "One transcript, three observations, one timestamp."
+              },
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "const json = pm.response.json();",
+                      "const obs = json.observations || [];",
+                      "const rules = obs.filter(o => o.source === 'RULES');",
+                      "const byType = t => rules.filter(o => o.vital.type === t);",
+                      "const remember = (o, rule) => { const m = JSON.parse(pm.collectionVariables.get('scenarioAlerts') || '{}'); m[o.id] = rule; pm.collectionVariables.set('scenarioAlerts', JSON.stringify(m)); };",
+                      "pm.test('status is 201', () => pm.response.to.have.status(201));",
+                      "pm.test('rules extracted exactly 3 value(s)', () => pm.expect(rules).to.have.length(3));",
+                      "const o0 = byType('BLOOD_PRESSURE').find(o => o.vital.systolic === 140 && o.vital.diastolic === 90);",
+                      "pm.test('blood pressure 140/90 is CONFIRMED', () => { pm.expect(o0, 'blood pressure 140/90 not extracted').to.be.ok; pm.expect(o0.status).to.eql('CONFIRMED'); });",
+                      "if (o0) remember(o0, null);",
+                      "const o1 = byType('PULSE').find(o => o.vital.bpm === 76);",
+                      "pm.test('pulse 76 is CONFIRMED', () => { pm.expect(o1, 'pulse 76 not extracted').to.be.ok; pm.expect(o1.status).to.eql('CONFIRMED'); });",
+                      "if (o1) remember(o1, null);",
+                      "const o2 = byType('BODY_TEMPERATURE').find(o => Math.abs(o.vital.celsius - 37.4) < 0.05);",
+                      "pm.test('temperature 37.4 °C is CONFIRMED', () => { pm.expect(o2, 'temperature 37.4 °C not extracted').to.be.ok; pm.expect(o2.status).to.eql('CONFIRMED'); });",
+                      "if (o2) remember(o2, null);"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "Guard: a clause boundary stops a keyword",
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Idempotency-Key",
+                    "value": "{{$guid}}"
+                  },
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": "{{docBaseUrl}}/v1/residents/{{scenarioResidentId}}/transcripts",
+                "auth": {
+                  "type": "bearer",
+                  "bearer": [
+                    {
+                      "key": "token",
+                      "value": "{{nurseToken}}",
+                      "type": "string"
+                    }
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"transcript\": \"temperature normal, pulse 80\"\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                },
+                "description": "\"temperature normal,\" has no number before the comma, so the 80 belongs to the pulse and is never read as a temperature."
+              },
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "const json = pm.response.json();",
+                      "const obs = json.observations || [];",
+                      "const rules = obs.filter(o => o.source === 'RULES');",
+                      "const byType = t => rules.filter(o => o.vital.type === t);",
+                      "const remember = (o, rule) => { const m = JSON.parse(pm.collectionVariables.get('scenarioAlerts') || '{}'); m[o.id] = rule; pm.collectionVariables.set('scenarioAlerts', JSON.stringify(m)); };",
+                      "pm.test('status is 201', () => pm.response.to.have.status(201));",
+                      "pm.test('rules extracted exactly 1 value(s)', () => pm.expect(rules).to.have.length(1));",
+                      "const o0 = byType('PULSE').find(o => o.vital.bpm === 80);",
+                      "pm.test('pulse 80 is CONFIRMED', () => { pm.expect(o0, 'pulse 80 not extracted').to.be.ok; pm.expect(o0.status).to.eql('CONFIRMED'); });",
+                      "if (o0) remember(o0, null);"
+                    ]
+                  }
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "name": "B. Values that need a nurse's review",
+          "description": "Read by the rules but with a confidence below 0.8: stored as NEEDS_REVIEW until a nurse confirms them.",
+          "item": [
+            {
+              "name": "Bare \"135/85\" without a keyword → NEEDS_REVIEW",
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Idempotency-Key",
+                    "value": "{{$guid}}"
+                  },
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": "{{docBaseUrl}}/v1/residents/{{scenarioResidentId}}/transcripts",
+                "auth": {
+                  "type": "bearer",
+                  "bearer": [
+                    {
+                      "key": "token",
+                      "value": "{{nurseToken}}",
+                      "type": "string"
+                    }
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"transcript\": \"Mr. Jones, 135/85\"\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                },
+                "description": "Almost certainly a blood pressure, but nobody said so: confidence 0.6."
+              },
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "const json = pm.response.json();",
+                      "const obs = json.observations || [];",
+                      "const rules = obs.filter(o => o.source === 'RULES');",
+                      "const byType = t => rules.filter(o => o.vital.type === t);",
+                      "const remember = (o, rule) => { const m = JSON.parse(pm.collectionVariables.get('scenarioAlerts') || '{}'); m[o.id] = rule; pm.collectionVariables.set('scenarioAlerts', JSON.stringify(m)); };",
+                      "pm.test('status is 201', () => pm.response.to.have.status(201));",
+                      "pm.test('rules extracted exactly 1 value(s)', () => pm.expect(rules).to.have.length(1));",
+                      "const o0 = byType('BLOOD_PRESSURE').find(o => o.vital.systolic === 135 && o.vital.diastolic === 85);",
+                      "pm.test('blood pressure 135/85 is NEEDS_REVIEW', () => { pm.expect(o0, 'blood pressure 135/85 not extracted').to.be.ok; pm.expect(o0.status).to.eql('NEEDS_REVIEW'); });",
+                      "pm.test('blood pressure 135/85 has confidence 0.6', () => pm.expect(o0.confidence).to.be.closeTo(0.6, 0.001));",
+                      "if (o0) remember(o0, null);"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "\"temp 101.3\": Fahrenheit inferred → 38.5 °C, NEEDS_REVIEW",
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Idempotency-Key",
+                    "value": "{{$guid}}"
+                  },
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": "{{docBaseUrl}}/v1/residents/{{scenarioResidentId}}/transcripts",
+                "auth": {
+                  "type": "bearer",
+                  "bearer": [
+                    {
+                      "key": "token",
+                      "value": "{{nurseToken}}",
+                      "type": "string"
+                    }
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"transcript\": \"temp 101.3\"\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                },
+                "description": "No unit, and the magnitude says Fahrenheit: converted, but the nurse never said Fahrenheit, so confidence 0.7."
+              },
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "const json = pm.response.json();",
+                      "const obs = json.observations || [];",
+                      "const rules = obs.filter(o => o.source === 'RULES');",
+                      "const byType = t => rules.filter(o => o.vital.type === t);",
+                      "const remember = (o, rule) => { const m = JSON.parse(pm.collectionVariables.get('scenarioAlerts') || '{}'); m[o.id] = rule; pm.collectionVariables.set('scenarioAlerts', JSON.stringify(m)); };",
+                      "pm.test('status is 201', () => pm.response.to.have.status(201));",
+                      "pm.test('rules extracted exactly 1 value(s)', () => pm.expect(rules).to.have.length(1));",
+                      "const o0 = byType('BODY_TEMPERATURE').find(o => Math.abs(o.vital.celsius - 38.5) < 0.05);",
+                      "pm.test('temperature 38.5 °C is NEEDS_REVIEW', () => { pm.expect(o0, 'temperature 38.5 °C not extracted').to.be.ok; pm.expect(o0.status).to.eql('NEEDS_REVIEW'); });",
+                      "pm.test('temperature 38.5 °C has confidence 0.7', () => pm.expect(o0.confidence).to.be.closeTo(0.7, 0.001));",
+                      "if (o0) remember(o0, null);"
+                    ]
+                  }
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "name": "C. Values that are never stored",
+          "description": "A wrong value in a care record is worse than a missing one. Implausible values are listed under `rejected` with a reason, so the nurse sees what was heard; ambiguous numbers are not read at all. If the AI fallback is enabled it runs for these (the rules found nothing usable); anything it finds is NEEDS_REVIEW and passes the same validation.",
+          "item": [
+            {
+              "name": "Diastolic above systolic → rejected",
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Idempotency-Key",
+                    "value": "{{$guid}}"
+                  },
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": "{{docBaseUrl}}/v1/residents/{{scenarioResidentId}}/transcripts",
+                "auth": {
+                  "type": "bearer",
+                  "bearer": [
+                    {
+                      "key": "token",
+                      "value": "{{nurseToken}}",
+                      "type": "string"
+                    }
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"transcript\": \"blood pressure 80 over 120\"\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                },
+                "description": "80/120 is in range per number, but inconsistent: diastolic must be lower than systolic."
+              },
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "const json = pm.response.json();",
+                      "const obs = json.observations || [];",
+                      "const rules = obs.filter(o => o.source === 'RULES');",
+                      "const byType = t => rules.filter(o => o.vital.type === t);",
+                      "const remember = (o, rule) => { const m = JSON.parse(pm.collectionVariables.get('scenarioAlerts') || '{}'); m[o.id] = rule; pm.collectionVariables.set('scenarioAlerts', JSON.stringify(m)); };",
+                      "pm.test('status is 201', () => pm.response.to.have.status(201));",
+                      "pm.test('the value was heard but rejected', () => pm.expect(json.rejected.some(r => r.matchedText.includes('80/120'))).to.be.true);",
+                      "pm.test('every rejection says why', () => json.rejected.forEach(r => pm.expect(r.reason).to.be.a('string').and.not.empty));",
+                      "pm.test('the implausible value was not stored', () => pm.expect(obs.some(o => o.vital.type === 'BLOOD_PRESSURE' && o.vital.systolic === 80)).to.be.false);"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "Pulse 300 → rejected",
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Idempotency-Key",
+                    "value": "{{$guid}}"
+                  },
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": "{{docBaseUrl}}/v1/residents/{{scenarioResidentId}}/transcripts",
+                "auth": {
+                  "type": "bearer",
+                  "bearer": [
+                    {
+                      "key": "token",
+                      "value": "{{nurseToken}}",
+                      "type": "string"
+                    }
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"transcript\": \"pulse 300\"\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                },
+                "description": "Outside the plausible range of 20 to 250 bpm."
+              },
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "const json = pm.response.json();",
+                      "const obs = json.observations || [];",
+                      "const rules = obs.filter(o => o.source === 'RULES');",
+                      "const byType = t => rules.filter(o => o.vital.type === t);",
+                      "const remember = (o, rule) => { const m = JSON.parse(pm.collectionVariables.get('scenarioAlerts') || '{}'); m[o.id] = rule; pm.collectionVariables.set('scenarioAlerts', JSON.stringify(m)); };",
+                      "pm.test('status is 201', () => pm.response.to.have.status(201));",
+                      "pm.test('the value was heard but rejected', () => pm.expect(json.rejected.some(r => r.matchedText.includes('300'))).to.be.true);",
+                      "pm.test('every rejection says why', () => json.rejected.forEach(r => pm.expect(r.reason).to.be.a('string').and.not.empty));",
+                      "pm.test('the implausible value was not stored', () => pm.expect(obs.some(o => o.vital.type === 'PULSE' && o.vital.bpm === 300)).to.be.false);"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "Temperature 45.5 → rejected",
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Idempotency-Key",
+                    "value": "{{$guid}}"
+                  },
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": "{{docBaseUrl}}/v1/residents/{{scenarioResidentId}}/transcripts",
+                "auth": {
+                  "type": "bearer",
+                  "bearer": [
+                    {
+                      "key": "token",
+                      "value": "{{nurseToken}}",
+                      "type": "string"
+                    }
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"transcript\": \"temperature 45.5\"\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                },
+                "description": "Outside the plausible range of 30.0 to 44.0 °C."
+              },
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "const json = pm.response.json();",
+                      "const obs = json.observations || [];",
+                      "const rules = obs.filter(o => o.source === 'RULES');",
+                      "const byType = t => rules.filter(o => o.vital.type === t);",
+                      "const remember = (o, rule) => { const m = JSON.parse(pm.collectionVariables.get('scenarioAlerts') || '{}'); m[o.id] = rule; pm.collectionVariables.set('scenarioAlerts', JSON.stringify(m)); };",
+                      "pm.test('status is 201', () => pm.response.to.have.status(201));",
+                      "pm.test('the value was heard but rejected', () => pm.expect(json.rejected.some(r => r.matchedText.includes('45.5'))).to.be.true);",
+                      "pm.test('every rejection says why', () => json.rejected.forEach(r => pm.expect(r.reason).to.be.a('string').and.not.empty));",
+                      "pm.test('the implausible value was not stored', () => pm.expect(obs.some(o => o.vital.type === 'BODY_TEMPERATURE' && o.vital.celsius > 44)).to.be.false);"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "Guard: \"pulse 80.5\" is not read as 80",
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Idempotency-Key",
+                    "value": "{{$guid}}"
+                  },
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": "{{docBaseUrl}}/v1/residents/{{scenarioResidentId}}/transcripts",
+                "auth": {
+                  "type": "bearer",
+                  "bearer": [
+                    {
+                      "key": "token",
+                      "value": "{{nurseToken}}",
+                      "type": "string"
+                    }
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"transcript\": \"pulse 80.5\"\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                },
+                "description": "A number must stand on its own: truncating 80.5 to 80 would store a value nobody said."
+              },
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "const json = pm.response.json();",
+                      "const obs = json.observations || [];",
+                      "const rules = obs.filter(o => o.source === 'RULES');",
+                      "const byType = t => rules.filter(o => o.vital.type === t);",
+                      "const remember = (o, rule) => { const m = JSON.parse(pm.collectionVariables.get('scenarioAlerts') || '{}'); m[o.id] = rule; pm.collectionVariables.set('scenarioAlerts', JSON.stringify(m)); };",
+                      "pm.test('status is 201', () => pm.response.to.have.status(201));",
+                      "pm.test('the rules did not read a value', () => pm.expect(rules).to.have.length(0));",
+                      "pm.test('anything the AI fallback found waits for a nurse', () => obs.forEach(o => { pm.expect(o.source).to.eql('AI'); pm.expect(o.status).to.eql('NEEDS_REVIEW'); }));"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "Guard: decimal comma \"temp 37,2\" is not guessed",
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Idempotency-Key",
+                    "value": "{{$guid}}"
+                  },
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": "{{docBaseUrl}}/v1/residents/{{scenarioResidentId}}/transcripts",
+                "auth": {
+                  "type": "bearer",
+                  "bearer": [
+                    {
+                      "key": "token",
+                      "value": "{{nurseToken}}",
+                      "type": "string"
+                    }
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"transcript\": \"temp 37,2\"\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                },
+                "description": "Deliberately not read: \"37,2\" could be a decimal or a list. English speech recognition writes decimal points; a German rule pack would handle the comma explicitly."
+              },
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "const json = pm.response.json();",
+                      "const obs = json.observations || [];",
+                      "const rules = obs.filter(o => o.source === 'RULES');",
+                      "const byType = t => rules.filter(o => o.vital.type === t);",
+                      "const remember = (o, rule) => { const m = JSON.parse(pm.collectionVariables.get('scenarioAlerts') || '{}'); m[o.id] = rule; pm.collectionVariables.set('scenarioAlerts', JSON.stringify(m)); };",
+                      "pm.test('status is 201', () => pm.response.to.have.status(201));",
+                      "pm.test('the rules did not read a value', () => pm.expect(rules).to.have.length(0));",
+                      "pm.test('anything the AI fallback found waits for a nurse', () => obs.forEach(o => { pm.expect(o.source).to.eql('AI'); pm.expect(o.status).to.eql('NEEDS_REVIEW'); }));"
+                    ]
+                  }
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "name": "D. AI fallback",
+          "description": "Only when the rules find nothing and AI_FALLBACK_ENABLED=true with a key for AI_PROVIDER. Without AI, the transcript is stored with no observations; with AI, every value is source AI and NEEDS_REVIEW.",
+          "item": [
+            {
+              "name": "Phrasing the rules cannot read",
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Idempotency-Key",
+                    "value": "{{$guid}}"
+                  },
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": "{{docBaseUrl}}/v1/residents/{{scenarioResidentId}}/transcripts",
+                "auth": {
+                  "type": "bearer",
+                  "bearer": [
+                    {
+                      "key": "token",
+                      "value": "{{nurseToken}}",
+                      "type": "string"
+                    }
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"transcript\": \"Her heart was racing, I counted a hundred and ten beats in a minute\"\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                },
+                "description": "Number words and no keyword pattern: the rules find nothing."
+              },
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "const json = pm.response.json();",
+                      "const obs = json.observations || [];",
+                      "const rules = obs.filter(o => o.source === 'RULES');",
+                      "const byType = t => rules.filter(o => o.vital.type === t);",
+                      "const remember = (o, rule) => { const m = JSON.parse(pm.collectionVariables.get('scenarioAlerts') || '{}'); m[o.id] = rule; pm.collectionVariables.set('scenarioAlerts', JSON.stringify(m)); };",
+                      "pm.test('status is 201', () => pm.response.to.have.status(201));",
+                      "pm.test('the rules found nothing', () => pm.expect(rules).to.have.length(0));",
+                      "if (json.usedAiFallback) {",
+                      "  pm.test('the AI fallback ran', () => pm.expect(json.usedAiFallback).to.be.true);",
+                      "  pm.test('AI values are source AI and wait for a nurse', () => obs.forEach(o => { pm.expect(o.source).to.eql('AI'); pm.expect(o.status).to.eql('NEEDS_REVIEW'); }));",
+                      "} else {",
+                      "  pm.test('AI is disabled: nothing stored, nothing guessed', () => pm.expect(obs).to.have.length(0));",
+                      "}"
+                    ]
+                  }
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "name": "E. Alerts: one scenario per rule, plus the boundaries",
+          "description": "Each transcript crosses exactly one alert threshold (AlertRules.kt): crisis ≥ 180 systolic or ≥ 120 diastolic, hypotension < 90 systolic, tachycardia > 120, bradycardia < 45, fever ≥ 39.5 °C, hypothermia < 35.0 °C. The last request checks alert-service: one alert per rule, none for the boundary values.",
+          "item": [
+            {
+              "name": "Hypertensive crisis via systolic (185/95)",
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Idempotency-Key",
+                    "value": "{{$guid}}"
+                  },
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": "{{docBaseUrl}}/v1/residents/{{scenarioResidentId}}/transcripts",
+                "auth": {
+                  "type": "bearer",
+                  "bearer": [
+                    {
+                      "key": "token",
+                      "value": "{{nurseToken}}",
+                      "type": "string"
+                    }
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"transcript\": \"blood pressure 185 over 95\"\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                },
+                "description": "Systolic ≥ 180."
+              },
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "const json = pm.response.json();",
+                      "const obs = json.observations || [];",
+                      "const rules = obs.filter(o => o.source === 'RULES');",
+                      "const byType = t => rules.filter(o => o.vital.type === t);",
+                      "const remember = (o, rule) => { const m = JSON.parse(pm.collectionVariables.get('scenarioAlerts') || '{}'); m[o.id] = rule; pm.collectionVariables.set('scenarioAlerts', JSON.stringify(m)); };",
+                      "pm.test('status is 201', () => pm.response.to.have.status(201));",
+                      "pm.test('rules extracted exactly 1 value(s)', () => pm.expect(rules).to.have.length(1));",
+                      "const o0 = byType('BLOOD_PRESSURE').find(o => o.vital.systolic === 185 && o.vital.diastolic === 95);",
+                      "pm.test('blood pressure 185/95 is CONFIRMED', () => { pm.expect(o0, 'blood pressure 185/95 not extracted').to.be.ok; pm.expect(o0.status).to.eql('CONFIRMED'); });",
+                      "if (o0) remember(o0, \"HYPERTENSIVE_CRISIS\");"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "Hypertensive crisis via diastolic (170/125)",
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Idempotency-Key",
+                    "value": "{{$guid}}"
+                  },
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": "{{docBaseUrl}}/v1/residents/{{scenarioResidentId}}/transcripts",
+                "auth": {
+                  "type": "bearer",
+                  "bearer": [
+                    {
+                      "key": "token",
+                      "value": "{{nurseToken}}",
+                      "type": "string"
+                    }
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"transcript\": \"blood pressure 170 over 125\"\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                },
+                "description": "Diastolic ≥ 120, systolic below 180."
+              },
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "const json = pm.response.json();",
+                      "const obs = json.observations || [];",
+                      "const rules = obs.filter(o => o.source === 'RULES');",
+                      "const byType = t => rules.filter(o => o.vital.type === t);",
+                      "const remember = (o, rule) => { const m = JSON.parse(pm.collectionVariables.get('scenarioAlerts') || '{}'); m[o.id] = rule; pm.collectionVariables.set('scenarioAlerts', JSON.stringify(m)); };",
+                      "pm.test('status is 201', () => pm.response.to.have.status(201));",
+                      "pm.test('rules extracted exactly 1 value(s)', () => pm.expect(rules).to.have.length(1));",
+                      "const o0 = byType('BLOOD_PRESSURE').find(o => o.vital.systolic === 170 && o.vital.diastolic === 125);",
+                      "pm.test('blood pressure 170/125 is CONFIRMED', () => { pm.expect(o0, 'blood pressure 170/125 not extracted').to.be.ok; pm.expect(o0.status).to.eql('CONFIRMED'); });",
+                      "if (o0) remember(o0, \"HYPERTENSIVE_CRISIS\");"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "Hypotension (85/55)",
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Idempotency-Key",
+                    "value": "{{$guid}}"
+                  },
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": "{{docBaseUrl}}/v1/residents/{{scenarioResidentId}}/transcripts",
+                "auth": {
+                  "type": "bearer",
+                  "bearer": [
+                    {
+                      "key": "token",
+                      "value": "{{nurseToken}}",
+                      "type": "string"
+                    }
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"transcript\": \"blood pressure 85 over 55\"\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                },
+                "description": "Systolic below 90."
+              },
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "const json = pm.response.json();",
+                      "const obs = json.observations || [];",
+                      "const rules = obs.filter(o => o.source === 'RULES');",
+                      "const byType = t => rules.filter(o => o.vital.type === t);",
+                      "const remember = (o, rule) => { const m = JSON.parse(pm.collectionVariables.get('scenarioAlerts') || '{}'); m[o.id] = rule; pm.collectionVariables.set('scenarioAlerts', JSON.stringify(m)); };",
+                      "pm.test('status is 201', () => pm.response.to.have.status(201));",
+                      "pm.test('rules extracted exactly 1 value(s)', () => pm.expect(rules).to.have.length(1));",
+                      "const o0 = byType('BLOOD_PRESSURE').find(o => o.vital.systolic === 85 && o.vital.diastolic === 55);",
+                      "pm.test('blood pressure 85/55 is CONFIRMED', () => { pm.expect(o0, 'blood pressure 85/55 not extracted').to.be.ok; pm.expect(o0.status).to.eql('CONFIRMED'); });",
+                      "if (o0) remember(o0, \"HYPOTENSION\");"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "Tachycardia (pulse 135)",
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Idempotency-Key",
+                    "value": "{{$guid}}"
+                  },
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": "{{docBaseUrl}}/v1/residents/{{scenarioResidentId}}/transcripts",
+                "auth": {
+                  "type": "bearer",
+                  "bearer": [
+                    {
+                      "key": "token",
+                      "value": "{{nurseToken}}",
+                      "type": "string"
+                    }
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"transcript\": \"pulse 135\"\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                },
+                "description": "Pulse above 120."
+              },
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "const json = pm.response.json();",
+                      "const obs = json.observations || [];",
+                      "const rules = obs.filter(o => o.source === 'RULES');",
+                      "const byType = t => rules.filter(o => o.vital.type === t);",
+                      "const remember = (o, rule) => { const m = JSON.parse(pm.collectionVariables.get('scenarioAlerts') || '{}'); m[o.id] = rule; pm.collectionVariables.set('scenarioAlerts', JSON.stringify(m)); };",
+                      "pm.test('status is 201', () => pm.response.to.have.status(201));",
+                      "pm.test('rules extracted exactly 1 value(s)', () => pm.expect(rules).to.have.length(1));",
+                      "const o0 = byType('PULSE').find(o => o.vital.bpm === 135);",
+                      "pm.test('pulse 135 is CONFIRMED', () => { pm.expect(o0, 'pulse 135 not extracted').to.be.ok; pm.expect(o0.status).to.eql('CONFIRMED'); });",
+                      "if (o0) remember(o0, \"TACHYCARDIA\");"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "Bradycardia (pulse 40)",
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Idempotency-Key",
+                    "value": "{{$guid}}"
+                  },
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": "{{docBaseUrl}}/v1/residents/{{scenarioResidentId}}/transcripts",
+                "auth": {
+                  "type": "bearer",
+                  "bearer": [
+                    {
+                      "key": "token",
+                      "value": "{{nurseToken}}",
+                      "type": "string"
+                    }
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"transcript\": \"pulse 40\"\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                },
+                "description": "Pulse below 45."
+              },
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "const json = pm.response.json();",
+                      "const obs = json.observations || [];",
+                      "const rules = obs.filter(o => o.source === 'RULES');",
+                      "const byType = t => rules.filter(o => o.vital.type === t);",
+                      "const remember = (o, rule) => { const m = JSON.parse(pm.collectionVariables.get('scenarioAlerts') || '{}'); m[o.id] = rule; pm.collectionVariables.set('scenarioAlerts', JSON.stringify(m)); };",
+                      "pm.test('status is 201', () => pm.response.to.have.status(201));",
+                      "pm.test('rules extracted exactly 1 value(s)', () => pm.expect(rules).to.have.length(1));",
+                      "const o0 = byType('PULSE').find(o => o.vital.bpm === 40);",
+                      "pm.test('pulse 40 is CONFIRMED', () => { pm.expect(o0, 'pulse 40 not extracted').to.be.ok; pm.expect(o0.status).to.eql('CONFIRMED'); });",
+                      "if (o0) remember(o0, \"BRADYCARDIA\");"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "High fever (39.8 °C)",
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Idempotency-Key",
+                    "value": "{{$guid}}"
+                  },
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": "{{docBaseUrl}}/v1/residents/{{scenarioResidentId}}/transcripts",
+                "auth": {
+                  "type": "bearer",
+                  "bearer": [
+                    {
+                      "key": "token",
+                      "value": "{{nurseToken}}",
+                      "type": "string"
+                    }
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"transcript\": \"temperature 39.8 degrees\"\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                },
+                "description": "Temperature at or above 39.5 °C."
+              },
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "const json = pm.response.json();",
+                      "const obs = json.observations || [];",
+                      "const rules = obs.filter(o => o.source === 'RULES');",
+                      "const byType = t => rules.filter(o => o.vital.type === t);",
+                      "const remember = (o, rule) => { const m = JSON.parse(pm.collectionVariables.get('scenarioAlerts') || '{}'); m[o.id] = rule; pm.collectionVariables.set('scenarioAlerts', JSON.stringify(m)); };",
+                      "pm.test('status is 201', () => pm.response.to.have.status(201));",
+                      "pm.test('rules extracted exactly 1 value(s)', () => pm.expect(rules).to.have.length(1));",
+                      "const o0 = byType('BODY_TEMPERATURE').find(o => Math.abs(o.vital.celsius - 39.8) < 0.05);",
+                      "pm.test('temperature 39.8 °C is CONFIRMED', () => { pm.expect(o0, 'temperature 39.8 °C not extracted').to.be.ok; pm.expect(o0.status).to.eql('CONFIRMED'); });",
+                      "if (o0) remember(o0, \"HIGH_FEVER\");"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "Hypothermia (34.6 °C)",
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Idempotency-Key",
+                    "value": "{{$guid}}"
+                  },
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": "{{docBaseUrl}}/v1/residents/{{scenarioResidentId}}/transcripts",
+                "auth": {
+                  "type": "bearer",
+                  "bearer": [
+                    {
+                      "key": "token",
+                      "value": "{{nurseToken}}",
+                      "type": "string"
+                    }
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"transcript\": \"temperature 34.6 degrees\"\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                },
+                "description": "Temperature below 35.0 °C."
+              },
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "const json = pm.response.json();",
+                      "const obs = json.observations || [];",
+                      "const rules = obs.filter(o => o.source === 'RULES');",
+                      "const byType = t => rules.filter(o => o.vital.type === t);",
+                      "const remember = (o, rule) => { const m = JSON.parse(pm.collectionVariables.get('scenarioAlerts') || '{}'); m[o.id] = rule; pm.collectionVariables.set('scenarioAlerts', JSON.stringify(m)); };",
+                      "pm.test('status is 201', () => pm.response.to.have.status(201));",
+                      "pm.test('rules extracted exactly 1 value(s)', () => pm.expect(rules).to.have.length(1));",
+                      "const o0 = byType('BODY_TEMPERATURE').find(o => Math.abs(o.vital.celsius - 34.6) < 0.05);",
+                      "pm.test('temperature 34.6 °C is CONFIRMED', () => { pm.expect(o0, 'temperature 34.6 °C not extracted').to.be.ok; pm.expect(o0.status).to.eql('CONFIRMED'); });",
+                      "if (o0) remember(o0, \"HYPOTHERMIA\");"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "Unconfirmed value still alerts (bare 190/100)",
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Idempotency-Key",
+                    "value": "{{$guid}}"
+                  },
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": "{{docBaseUrl}}/v1/residents/{{scenarioResidentId}}/transcripts",
+                "auth": {
+                  "type": "bearer",
+                  "bearer": [
+                    {
+                      "key": "token",
+                      "value": "{{nurseToken}}",
+                      "type": "string"
+                    }
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"transcript\": \"Mr. Jones, 190/100\"\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                },
+                "description": "NEEDS_REVIEW does not suppress the alert: the ward lead must know, and the message says the value is unconfirmed."
+              },
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "const json = pm.response.json();",
+                      "const obs = json.observations || [];",
+                      "const rules = obs.filter(o => o.source === 'RULES');",
+                      "const byType = t => rules.filter(o => o.vital.type === t);",
+                      "const remember = (o, rule) => { const m = JSON.parse(pm.collectionVariables.get('scenarioAlerts') || '{}'); m[o.id] = rule; pm.collectionVariables.set('scenarioAlerts', JSON.stringify(m)); };",
+                      "pm.test('status is 201', () => pm.response.to.have.status(201));",
+                      "pm.test('rules extracted exactly 1 value(s)', () => pm.expect(rules).to.have.length(1));",
+                      "const o0 = byType('BLOOD_PRESSURE').find(o => o.vital.systolic === 190 && o.vital.diastolic === 100);",
+                      "pm.test('blood pressure 190/100 is NEEDS_REVIEW', () => { pm.expect(o0, 'blood pressure 190/100 not extracted').to.be.ok; pm.expect(o0.status).to.eql('NEEDS_REVIEW'); });",
+                      "if (o0) remember(o0, \"HYPERTENSIVE_CRISIS\");"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "Just inside every limit: no alert",
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Idempotency-Key",
+                    "value": "{{$guid}}"
+                  },
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": "{{docBaseUrl}}/v1/residents/{{scenarioResidentId}}/transcripts",
+                "auth": {
+                  "type": "bearer",
+                  "bearer": [
+                    {
+                      "key": "token",
+                      "value": "{{nurseToken}}",
+                      "type": "string"
+                    }
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"transcript\": \"BP 179 over 119, pulse 120, temp 39.4 degrees\"\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                },
+                "description": "179/119, 120 bpm and 39.4 °C are each one step below a threshold: three observations, zero alerts."
+              },
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "const json = pm.response.json();",
+                      "const obs = json.observations || [];",
+                      "const rules = obs.filter(o => o.source === 'RULES');",
+                      "const byType = t => rules.filter(o => o.vital.type === t);",
+                      "const remember = (o, rule) => { const m = JSON.parse(pm.collectionVariables.get('scenarioAlerts') || '{}'); m[o.id] = rule; pm.collectionVariables.set('scenarioAlerts', JSON.stringify(m)); };",
+                      "pm.test('status is 201', () => pm.response.to.have.status(201));",
+                      "pm.test('rules extracted exactly 3 value(s)', () => pm.expect(rules).to.have.length(3));",
+                      "const o0 = byType('BLOOD_PRESSURE').find(o => o.vital.systolic === 179 && o.vital.diastolic === 119);",
+                      "pm.test('blood pressure 179/119 is CONFIRMED', () => { pm.expect(o0, 'blood pressure 179/119 not extracted').to.be.ok; pm.expect(o0.status).to.eql('CONFIRMED'); });",
+                      "if (o0) remember(o0, null);",
+                      "const o1 = byType('PULSE').find(o => o.vital.bpm === 120);",
+                      "pm.test('pulse 120 is CONFIRMED', () => { pm.expect(o1, 'pulse 120 not extracted').to.be.ok; pm.expect(o1.status).to.eql('CONFIRMED'); });",
+                      "if (o1) remember(o1, null);",
+                      "const o2 = byType('BODY_TEMPERATURE').find(o => Math.abs(o.vital.celsius - 39.4) < 0.05);",
+                      "pm.test('temperature 39.4 °C is CONFIRMED', () => { pm.expect(o2, 'temperature 39.4 °C not extracted').to.be.ok; pm.expect(o2.status).to.eql('CONFIRMED'); });",
+                      "if (o2) remember(o2, null);"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "Check: exactly the expected alerts (ward lead)",
+              "request": {
+                "method": "GET",
+                "header": [],
+                "url": "{{alertBaseUrl}}/v1/alerts?status=OPEN&limit=100",
+                "auth": {
+                  "type": "bearer",
+                  "bearer": [
+                    {
+                      "key": "token",
+                      "value": "{{leadToken}}",
+                      "type": "string"
+                    }
+                  ]
+                },
+                "description": "Compares every scenario observation of this folder with the open alerts: each alerting scenario raised exactly its rule, every other observation (folders A to E) raised none. Waits 4 s first, because alerts arrive asynchronously (outbox → RabbitMQ → alert-service)."
+              },
+              "event": [
+                {
+                  "listen": "prerequest",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "// Alerts are created asynchronously; give the outbox relay and the consumer a moment.",
+                      "setTimeout(() => {}, 4000);"
+                    ]
+                  }
+                },
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('status is 200', () => pm.response.to.have.status(200));",
+                      "const alerts = pm.response.json().items;",
+                      "const expected = JSON.parse(pm.collectionVariables.get('scenarioAlerts') || '{}');",
+                      "Object.entries(expected).forEach(([observationId, rule]) => {",
+                      "  const raised = alerts.filter(a => a.observationId === observationId).map(a => a.rule);",
+                      "  if (rule) {",
+                      "    pm.test(`${rule} raised once for ${observationId.slice(0, 8)}`, () => pm.expect(raised).to.eql([rule]));",
+                      "  } else {",
+                      "    pm.test(`no alert for ${observationId.slice(0, 8)}`, () => pm.expect(raised).to.have.length(0));",
+                      "  }",
+                      "});",
+                      "const unconfirmed = alerts.find(a => a.message.includes('unconfirmed value'));",
+                      "pm.test('the alert for an unconfirmed value says so', () => pm.expect(unconfirmed).to.be.ok);"
+                    ]
+                  }
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}
