@@ -1,0 +1,8 @@
+# Protocol documents loaded into the guidance knowledge base (one file name per line).
+hypertensive-crisis.md
+hypotension.md
+tachycardia.md
+bradycardia.md
+high-fever.md
+hypothermia.md
+unconfirmed-values.md
