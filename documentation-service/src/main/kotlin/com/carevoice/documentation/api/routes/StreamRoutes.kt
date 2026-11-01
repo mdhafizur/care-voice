@@ -23,7 +23,7 @@ import io.ktor.sse.ServerSentEvent
  * `Cache-Control: no-store`.
  */
 fun Route.streamRoutes(deps: Dependencies) {
-    sse("/v1/observations/stream") {
+    sse(OBSERVATION_STREAM_PATH) {
         heartbeat {
             period = deps.http.sseHeartbeat
             event = ServerSentEvent(comments = "heartbeat")
@@ -41,5 +41,8 @@ fun Route.streamRoutes(deps: Dependencies) {
         }
     }
 }
+
+/** Long-lived SSE stream: exempt from the request deadline. */
+const val OBSERVATION_STREAM_PATH = "/v1/observations/stream"
 
 const val OBSERVATION_EVENT = "observation"

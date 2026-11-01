@@ -73,6 +73,8 @@ paths:
           $ref: '#/components/responses/TooManyRequests'
         '500':
           $ref: '#/components/responses/InternalError'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
 
   /v1/residents/{residentId}:
     get:
@@ -110,6 +112,8 @@ paths:
           $ref: '#/components/responses/TooManyRequests'
         '500':
           $ref: '#/components/responses/InternalError'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
 
   /v1/residents/{residentId}/transcripts:
     post:
@@ -194,6 +198,8 @@ paths:
           $ref: '#/components/responses/TooManyRequests'
         '500':
           $ref: '#/components/responses/InternalError'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
 
   /v1/transcripts/{transcriptId}:
     get:
@@ -228,6 +234,8 @@ paths:
           $ref: '#/components/responses/TooManyRequests'
         '500':
           $ref: '#/components/responses/InternalError'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
 
   /v1/residents/{residentId}/observations:
     get:
@@ -269,6 +277,8 @@ paths:
           $ref: '#/components/responses/TooManyRequests'
         '500':
           $ref: '#/components/responses/InternalError'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
 
   /v1/observations:
     query:
@@ -302,6 +312,8 @@ paths:
           $ref: '#/components/responses/TooManyRequests'
         '500':
           $ref: '#/components/responses/InternalError'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
 
   /v1/observations/search:
     post:
@@ -332,6 +344,8 @@ paths:
           $ref: '#/components/responses/TooManyRequests'
         '500':
           $ref: '#/components/responses/InternalError'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
 
   /v1/observations/{observationId}/confirm:
     patch:
@@ -381,6 +395,8 @@ paths:
           $ref: '#/components/responses/TooManyRequests'
         '500':
           $ref: '#/components/responses/InternalError'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
 
   /v1/observations/stream:
     get:
@@ -415,6 +431,8 @@ paths:
           $ref: '#/components/responses/TooManyRequests'
         '500':
           $ref: '#/components/responses/InternalError'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
 
   /livez:
     get:
@@ -718,6 +736,24 @@ components:
         application/problem+json:
           schema:
             $ref: '#/components/schemas/Problem'
+    ServiceUnavailable:
+      description: |
+        The database is unreachable or too slow (statement time limit), or the request ran past `REQUEST_TIMEOUT_MS`.
+        Retry after the time given in `Retry-After`.
+      headers:
+        Retry-After:
+          $ref: '#/components/headers/RetryAfter'
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/Problem'
+          example:
+            type: https://carevoice.dev/problems/service-unavailable
+            title: Service Unavailable
+            status: 503
+            detail: The request did not finish in time. Retry later.
+            instance: /v1/residents/res-1/transcripts
+            requestId: 4bf92f35-77b3-4da6-a3ce-929d0e0e4736
     InternalError:
       description: Unexpected error. The body never contains internal details.
       content:

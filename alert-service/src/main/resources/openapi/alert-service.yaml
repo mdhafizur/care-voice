@@ -651,7 +651,9 @@ components:
             instance: /v1/alerts
             requestId: 7c1d0e8a-2f3b-4c5d-9e6f-0a1b2c3d4e5f
     ServiceUnavailable:
-      description: Overloaded, or MongoDB has no reachable primary (e.g. during a failover). Retry later.
+      description: |
+        Overloaded, MongoDB has no reachable primary (e.g. during a failover), or the request ran past
+        `REQUEST_TIMEOUT_MS`. Retry later.
       headers:
         X-Request-Id:
           $ref: '#/components/headers/XRequestId'

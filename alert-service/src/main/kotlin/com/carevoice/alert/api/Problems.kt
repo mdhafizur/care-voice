@@ -59,6 +59,9 @@ private const val PROBLEM_BASE = "https://carevoice.dev/problems/"
 private const val UNEXPECTED_ERROR = "An unexpected error occurred."
 private const val RETRY_AFTER_SECONDS = "1"
 
+/** A request that ran out of time is retried a little later than a plain 503, so a slow dependency can recover. */
+private const val DEADLINE_RETRY_AFTER_SECONDS = "2"
+
 val ProblemContentType: ContentType = ContentType("application", "problem+json")
 
 private val problemJson = Json { explicitNulls = false }
@@ -230,6 +233,17 @@ private suspend fun ApplicationCall.respondServiceError(cause: AlertServiceExcep
                 "service-unavailable",
                 "Service unavailable",
                 "The service is temporarily unable to handle the request. Retry after the time given in Retry-After.",
+            )
+        }
+
+        is AlertServiceException.RequestTimedOut -> {
+            // Already logged at WARN by the request deadline, with method, path and the limit.
+            response.header(HttpHeaders.RetryAfter, DEADLINE_RETRY_AFTER_SECONDS)
+            respondProblem(
+                HttpStatusCode.ServiceUnavailable,
+                "service-unavailable",
+                "Service unavailable",
+                "The request did not finish in time. Retry after the time given in Retry-After.",
             )
         }
     }

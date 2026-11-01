@@ -306,7 +306,11 @@ class ServiceSystem private constructor(
                     jwt = config.jwt,
                     meterRegistry = meterRegistry,
                     clock = clock,
-                    http = HttpSettings(rateLimitPerMinute = config.rateLimitPerMinute),
+                    http =
+                    HttpSettings(
+                        rateLimitPerMinute = config.rateLimitPerMinute,
+                        requestTimeout = config.requestTimeout,
+                    ),
                 )
 
             return ServiceSystem(

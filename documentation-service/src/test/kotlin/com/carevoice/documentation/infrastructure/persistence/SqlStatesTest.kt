@@ -15,8 +15,8 @@ class SqlStatesTest {
     @Nested
     @DisplayName("Business Logic")
     inner class BusinessLogic {
-        @ParameterizedTest(name = "should treat SQLState {0} as an unreachable database")
-        @ValueSource(strings = ["08001", "08006", "08003", "57P01", "57P02", "57P03"])
+        @ParameterizedTest(name = "should treat SQLState {0} as an unavailable database")
+        @ValueSource(strings = ["08001", "08006", "08003", "57P01", "57P02", "57P03", "57014", "25P03"])
         fun `should treat connection and shutdown states as unavailable`(state: String) {
             assertThat(SqlStates.isUnavailable(SQLException("down", state))).isTrue()
         }

@@ -1,6 +1,9 @@
 package com.carevoice.alert.config
 
 import java.net.URI
+import kotlin.time.Duration
+import kotlin.time.Duration.Companion.milliseconds
+import kotlin.time.Duration.Companion.seconds
 
 /**
  * The complete, typed configuration of alert-service (docs/CONTRACTS.md, section 4).
@@ -18,6 +21,7 @@ data class AppConfig(
     val rabbitmq: RabbitMqConfig,
     val rateLimitPerMinute: Int,
     val guidance: GuidanceConfig = GuidanceConfig(),
+    val requestTimeout: Duration = DEFAULT_REQUEST_TIMEOUT,
 ) {
     companion object {
         const val DEFAULT_HTTP_PORT = 8081
@@ -28,6 +32,7 @@ data class AppConfig(
         const val DEFAULT_RABBITMQ_PREFETCH = 32
         const val DEFAULT_RATE_LIMIT_PER_MINUTE = 120
         const val MIN_JWT_SECRET_BYTES = 32
+        val DEFAULT_REQUEST_TIMEOUT: Duration = 30.seconds
 
         /**
          * Loads and validates the configuration from [env] (normally `System.getenv()`).
@@ -143,6 +148,7 @@ private class ConfigLoader(private val env: Map<String, String>) {
         if (rabbitUrl != null) validateAmqpUrl(rabbitUrl)
         val prefetch = int("RABBITMQ_PREFETCH", AppConfig.DEFAULT_RABBITMQ_PREFETCH, 1..1_000)
         val rateLimit = int("RATE_LIMIT_PER_MINUTE", AppConfig.DEFAULT_RATE_LIMIT_PER_MINUTE, 1..100_000)
+        val requestTimeoutMs = int("REQUEST_TIMEOUT_MS", 30_000, 1_000..120_000)
         val guidance = guidance()
 
         if (errors.isNotEmpty()) throw ConfigException(errors.toList())
@@ -153,6 +159,7 @@ private class ConfigLoader(private val env: Map<String, String>) {
             rabbitmq = RabbitMqConfig(rabbitUrl!!, prefetch!!),
             rateLimitPerMinute = rateLimit!!,
             guidance = guidance,
+            requestTimeout = requestTimeoutMs!!.milliseconds,
         )
     }
 

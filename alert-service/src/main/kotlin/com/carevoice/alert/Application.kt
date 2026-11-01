@@ -4,6 +4,7 @@ import com.carevoice.alert.api.AlertApi
 import com.carevoice.alert.api.JwtSettings
 import com.carevoice.alert.api.alertServiceRoutes
 import com.carevoice.alert.api.installHttpPlugins
+import com.carevoice.alert.api.installRequestDeadline
 import com.carevoice.alert.application.AcknowledgeAlert
 import com.carevoice.alert.application.AlertRepository
 import com.carevoice.alert.application.CheckReadiness
@@ -67,6 +68,7 @@ private val log = LoggerFactory.getLogger("com.carevoice.alert.Application")
  * @property healthChecks what `/readyz` checks (Mongo primary, RabbitMQ consumer).
  * @property protocolChunks the guidance knowledge base; null = none (every alert gets NO_MATCHING_PROTOCOL).
  * @property guidanceWriter the LLM writer for guidance; null = extractive guidance only.
+ * @property requestTimeout upper bound for one HTTP request (`REQUEST_TIMEOUT_MS`); past it the call is cancelled, 503.
  * @property readinessPropagationDelay how long the pod keeps serving with readiness DOWN before it stops, so the load
  *   balancer has observed the 503 and routes no new requests to it (docs/CONTRACTS.md, section 9b).
  */
@@ -88,6 +90,7 @@ class Dependencies(
     val protocolChunks: ProtocolChunkRepository? = null,
     val guidanceWriter: GuidanceWriter? = null,
     val readinessPropagationDelay: Duration = Duration.ZERO,
+    val requestTimeout: Duration = AppConfig.DEFAULT_REQUEST_TIMEOUT,
     /** Called once when the server begins to stop, after readiness flipped and before requests are drained. */
     val beforeDrain: suspend () -> Unit = {},
 ) {
@@ -103,6 +106,7 @@ class Dependencies(
  */
 fun Application.module(deps: Dependencies) {
     installHttpPlugins(deps.jwt, deps.rateLimitPerMinute, deps.meterRegistry)
+    installRequestDeadline(deps.requestTimeout)
     val api =
         AlertApi(
             processObservationEvent = deps.processObservationEvent,
@@ -205,6 +209,7 @@ private fun serve(config: AppConfig) {
         Dependencies(
             jwt = JwtSettings(config.jwt.secret, config.jwt.issuer, config.jwt.audience),
             rateLimitPerMinute = config.rateLimitPerMinute,
+            requestTimeout = config.requestTimeout,
             meterRegistry = registry,
             scrapeMetrics = { registry.scrape() },
             alerts = alerts,

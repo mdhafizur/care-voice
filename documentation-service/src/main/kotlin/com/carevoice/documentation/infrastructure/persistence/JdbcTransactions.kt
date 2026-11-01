@@ -112,21 +112,25 @@ object AdvisoryLocks {
 /** PostgreSQL error classes the adapters react to. */
 object SqlStates {
     const val UNIQUE_VIOLATION = "23505"
+    const val STATEMENT_TIMEOUT = "57014"
+    const val IDLE_IN_TRANSACTION_TIMEOUT = "25P03"
 
     /** Walks the cause chain: drivers and pools sometimes wrap the original [SQLException]. */
     fun isUniqueViolation(e: Throwable): Boolean =
         generateSequence(e) { it.cause }.any { it is SQLException && it.sqlState == UNIQUE_VIOLATION }
 
     /**
-     * True when the database cannot be reached or is shutting down, as opposed to a problem with the statement:
-     * class 08 (connection exception), 57P01-57P03 (admin shutdown, crash shutdown, cannot connect now, e.g. during
-     * a failover), and the pool's own "no connection within connectionTimeout" (SQLTransientConnectionException).
+     * True when the database cannot be reached, is shutting down or is too slow right now, as opposed to a problem
+     * with the statement: class 08 (connection exception), 57P01-57P03 (admin shutdown, crash shutdown, cannot connect
+     * now, e.g. during a failover), 57014 (statement cancelled by statement_timeout, migration V4), 25P03 (session
+     * ended by idle_in_transaction_session_timeout), and the pool's own "no connection within connectionTimeout"
+     * (SQLTransientConnectionException). All of them are worth a retry later, so they become 503 + Retry-After.
      */
     fun isUnavailable(e: Throwable): Boolean = generateSequence(e) { it.cause }.any {
         it is SQLTransientConnectionException ||
             it is SQLNonTransientConnectionException ||
-            (it is SQLException && it.sqlState?.let { state -> state.startsWith("08") || state in SHUTDOWN } == true)
+            (it is SQLException && it.sqlState?.let { state -> state.startsWith("08") || state in RETRY_LATER } == true)
     }
 
-    private val SHUTDOWN = setOf("57P01", "57P02", "57P03")
+    private val RETRY_LATER = setOf("57P01", "57P02", "57P03", STATEMENT_TIMEOUT, IDLE_IN_TRANSACTION_TIMEOUT)
 }

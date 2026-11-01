@@ -22,6 +22,7 @@ data class HttpSettings(
     val loginRateLimitPerMinute: Int = 10,
     val maxBodyBytes: Long = 64L * 1024,
     val sseHeartbeat: Duration = 15.seconds,
+    val requestTimeout: Duration = 30.seconds,
 )
 
 /**

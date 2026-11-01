@@ -1,5 +1,7 @@
 package com.carevoice.alert.application
 
+import kotlin.time.Duration
+
 /** One invalid input field, reported back as `errors[]` in the problem body. */
 data class FieldViolation(val field: String, val message: String)
 
@@ -39,4 +41,8 @@ sealed class AlertServiceException(message: String, cause: Throwable? = null) : 
      */
     class DependencyUnavailable(val dependency: String, cause: Throwable) :
         AlertServiceException("$dependency is temporarily unavailable.", cause)
+
+    /** An HTTP request ran past `REQUEST_TIMEOUT_MS` and was cancelled (503 + Retry-After). Never raised on AMQP. */
+    class RequestTimedOut(val timeout: Duration) :
+        AlertServiceException("The request did not finish within $timeout.")
 }

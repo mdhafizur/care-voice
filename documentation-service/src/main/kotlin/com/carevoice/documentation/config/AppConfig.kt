@@ -30,13 +30,15 @@ data class AppConfig(
     val transcriptRetention: Duration,
     val demoSeed: DemoSeedConfig,
     val rateLimitPerMinute: Int,
+    val requestTimeout: Duration = 30.seconds,
 ) {
     /** Never prints secrets, so the config can be logged at startup and appear in failed assertions safely. */
     override fun toString(): String =
         "AppConfig(httpPort=$httpPort, database=$database, readDatabase=$readDatabase, jwt=$jwt, " +
             "encryption=$encryption, eventTransport=$eventTransport, alertServiceUrl=$alertServiceUrl, " +
             "rabbitmqUrl=${rabbitmqUrl?.let { redactUserInfo(it) }}, redisUrl=${redactUserInfo(redisUrl)}, ai=$ai, " +
-            "transcriptRetention=$transcriptRetention, demoSeed=$demoSeed, rateLimitPerMinute=$rateLimitPerMinute)"
+            "transcriptRetention=$transcriptRetention, demoSeed=$demoSeed, rateLimitPerMinute=$rateLimitPerMinute, " +
+            "requestTimeout=$requestTimeout)"
 
     companion object {
         /**
@@ -219,6 +221,7 @@ private class ConfigLoader(private val env: Map<String, String>) {
                 transcriptRetention = int("TRANSCRIPT_RETENTION_DAYS", default = 30, range = 1..3_650).days,
                 demoSeed = DemoSeedConfig(demoEnabled, demoPassword),
                 rateLimitPerMinute = int("RATE_LIMIT_PER_MINUTE", default = 120, range = 1..100_000),
+                requestTimeout = int("REQUEST_TIMEOUT_MS", default = 30_000, range = 1_000..120_000).milliseconds,
             )
         if (errors.isNotEmpty()) throw ConfigException(errors.toList())
         return config

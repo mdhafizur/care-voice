@@ -5,6 +5,7 @@ import org.assertj.core.api.Assertions.catchThrowableOfType
 import org.junit.jupiter.api.DisplayName
 import org.junit.jupiter.api.Nested
 import org.junit.jupiter.api.Test
+import kotlin.time.Duration.Companion.seconds
 
 @DisplayName("AppConfig")
 class AppConfigTest {
@@ -42,6 +43,7 @@ class AppConfigTest {
                         "RABBITMQ_URL" to "http://rabbit",
                         "RABBITMQ_PREFETCH" to "abc",
                         "RATE_LIMIT_PER_MINUTE" to "-5",
+                        "REQUEST_TIMEOUT_MS" to "500",
                     )
 
             val error = catchThrowableOfType(ConfigException::class.java) { AppConfig.load(env) }
@@ -56,6 +58,7 @@ class AppConfigTest {
                 "RABBITMQ_URL must be an amqp:// or amqps:// URL",
                 "RABBITMQ_PREFETCH must be an integer in 1..1000 (was 'abc')",
                 "RATE_LIMIT_PER_MINUTE must be an integer in 1..100000 (was '-5')",
+                "REQUEST_TIMEOUT_MS must be an integer in 1000..120000 (was '500')",
             )
         }
 
@@ -84,6 +87,7 @@ class AppConfigTest {
             assertThat(config.jwt.audience).isEqualTo("carevoice")
             assertThat(config.rabbitmq.prefetch).isEqualTo(32)
             assertThat(config.rateLimitPerMinute).isEqualTo(120)
+            assertThat(config.requestTimeout).isEqualTo(30.seconds)
         }
 
         @Test

@@ -79,6 +79,9 @@ class Database private constructor(
         /** Wraps an existing data source (tests, tools). */
         fun of(primary: HikariDataSource, replica: HikariDataSource? = null): Database = Database(primary, replica)
 
+        /** PgJDBC socketTimeout in seconds; well above statement_timeout (5 s), so it only fires for a dead peer. */
+        private const val SOCKET_TIMEOUT_SECONDS = 30
+
         internal fun hikariConfig(
             poolName: String,
             url: String,
@@ -106,6 +109,9 @@ class Database private constructor(
             prepareThreshold?.let { addDataSourceProperty("prepareThreshold", it) }
             addDataSourceProperty("ApplicationName", "documentation-service")
             addDataSourceProperty("tcpKeepAlive", true)
+            // Last line of defence below the server's statement_timeout (5 s, migration V4): a connection whose server
+            // stops answering (network partition, frozen node) fails after 30 s instead of hanging a request forever.
+            addDataSourceProperty("socketTimeout", SOCKET_TIMEOUT_SECONDS)
         }
     }
 }

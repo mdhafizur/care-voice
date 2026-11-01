@@ -11,8 +11,10 @@ import com.mongodb.client.model.ReturnDocument
 import com.mongodb.client.model.Sorts
 import com.mongodb.client.model.Updates
 import com.mongodb.kotlin.client.coroutine.MongoDatabase
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.toList
+import kotlinx.coroutines.withContext
 import org.bson.Document
 import org.slf4j.LoggerFactory
 import org.slf4j.event.Level
@@ -196,21 +198,32 @@ class MongoMigrationRunner(
         )
     }
 
-    private suspend fun releaseLock() {
-        runCatching {
+    /**
+     * Runs from `finally`, so it also runs while the migration is being cancelled (SIGTERM during a rollout). In a
+     * cancelled coroutine a plain suspending call would fail at once and leave the lock until its TTL; NonCancellable
+     * lets this one write finish. The write itself is bounded by the client's server-selection and socket timeouts.
+     */
+    private suspend fun releaseLock(): Unit = withContext(NonCancellable) {
+        try {
             locks.updateOne(
                 Filters.and(Filters.eq("_id", LOCK_ID), Filters.eq(OWNER, owner)),
                 Updates.combine(Updates.set(LOCKED, false), Updates.set(EXPIRES_AT, Date.from(Instant.EPOCH))),
             )
-        }.onFailure {
-            log.event(
-                Level.WARN,
-                LogType.DB_OPERATION,
-                "Could not release the Mongo migration lock; it expires by itself",
-                "lockTtl" to lockTtl.toString(),
-                cause = it,
-            )
+        } catch (e: Exception) {
+            // No CancellationException can arrive here (NonCancellable); a failed release only delays the next run.
+            lockReleaseFailed(e)
         }
+        Unit
+    }
+
+    private fun lockReleaseFailed(cause: Exception) {
+        log.event(
+            Level.WARN,
+            LogType.DB_OPERATION,
+            "Could not release the Mongo migration lock; it expires by itself",
+            "lockTtl" to lockTtl.toString(),
+            cause = cause,
+        )
     }
 
     private fun expiryFrom(now: Instant): Instant = now.plusMillis(lockTtl.inWholeMilliseconds)

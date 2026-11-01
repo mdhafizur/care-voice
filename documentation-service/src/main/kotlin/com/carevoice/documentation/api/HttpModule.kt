@@ -7,7 +7,9 @@ import com.carevoice.documentation.api.plugins.UserRateLimit
 import com.carevoice.documentation.api.plugins.installCorrelationAndAccessLog
 import com.carevoice.documentation.api.plugins.installJwtAuthentication
 import com.carevoice.documentation.api.plugins.installMetrics
+import com.carevoice.documentation.api.plugins.installRequestDeadline
 import com.carevoice.documentation.api.plugins.installSecurityHeaders
+import com.carevoice.documentation.api.routes.OBSERVATION_STREAM_PATH
 import com.carevoice.documentation.api.routes.authRoutes
 import com.carevoice.documentation.api.routes.observationRoutes
 import com.carevoice.documentation.api.routes.operationalRoutes
@@ -24,7 +26,8 @@ import io.ktor.server.sse.SSE
  * The complete HTTP application, built only from [Dependencies]: `main` passes real adapters, tests pass fakes.
  *
  * Plugin order matters: correlation first (every later log line has a requestId), then metrics, security headers,
- * problem details, authentication. Request bodies are read by the handlers through `receiveJson`, which enforces
+ * problem details, the request deadline (so a timed-out request still gets a problem response and an access-log
+ * line), authentication. Request bodies are read by the handlers through `receiveJson`, which enforces
  * 415/413/400 itself, so no ContentNegotiation plugin is installed and no body is parsed implicitly.
  */
 fun Application.httpModule(deps: Dependencies) {
@@ -32,6 +35,7 @@ fun Application.httpModule(deps: Dependencies) {
     installMetrics(deps.meterRegistry)
     installSecurityHeaders()
     installProblemDetails()
+    installRequestDeadline(deps.http.requestTimeout, exemptPaths = setOf(OBSERVATION_STREAM_PATH))
     installJwtAuthentication(deps.jwt, deps.clock)
     install(SSE)
 

@@ -344,6 +344,7 @@ class ObservationEventConsumer(
                 is AlertServiceException.PreconditionRequired,
                 is AlertServiceException.PreconditionFailed,
                 is AlertServiceException.InvalidCursor,
+                is AlertServiceException.RequestTimedOut,
                 -> retryOrDeadLetter(delivery, e)
             }
         } catch (e: Exception) {
