@@ -169,13 +169,13 @@ observability-reset: ## Delete ALL logs, metrics and traces (otel-lgtm volume) a
 monitoring-up: ## Start Uptime Kuma and create its monitors + status page (profile monitoring)
 	$(COMPOSE) --profile monitoring up -d uptime-kuma
 	$(COMPOSE) --profile monitoring run --rm uptime-kuma-setup
-	@echo "Uptime Kuma:  http://localhost:3001  (login: KUMA_USERNAME / KUMA_PASSWORD from .env, default admin / carevoice-admin-1)"
+	@echo "Uptime Kuma:  http://localhost:3001  (login: KUMA_USERNAME / KUMA_PASSWORD from .env, default admin / admin)"
 	@echo "Status page:  http://localhost:3001/status/carevoice"
 
 admin-up: ## Start pgAdmin (http://localhost:5050) and mongo-express (http://localhost:8082) (profile admin)
 	$(COMPOSE) --profile admin up -d pgadmin mongo-express
 	@echo "pgAdmin:       http://localhost:5050   (server pre-registered; password = POSTGRES_PASSWORD from .env)"
-	@echo "mongo-express: http://localhost:8082   (login admin / MONGO_EXPRESS_PASSWORD, default carevoice-admin-1)"
+	@echo "mongo-express: http://localhost:8082   (login admin / MONGO_EXPRESS_PASSWORD, default admin)"
 
 tools-up: ## Start Homepage, one start page with every UI of the stack (profile tools; config in deploy/homepage)
 	$(COMPOSE) --profile tools up -d homepage

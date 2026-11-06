@@ -16,7 +16,7 @@ COMPOSE=${COMPOSE:-docker compose}
 START=${1:-1}
 
 PW=${DEMO_PASSWORD:-$(sed -n 's/^DEMO_PASSWORD=//p' .env 2>/dev/null | tail -1 | tr -d "'\"")}
-PW=${PW:-demo-password-change-me}
+PW=${PW:-admin123}
 
 TMP=$(mktemp -d)
 SSE_PID=""

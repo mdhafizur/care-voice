@@ -35,11 +35,11 @@ x-alert-build: &alert-build
 x-documentation-env: &documentation-env
   HTTP_PORT: "8080"
   DATABASE_URL: jdbc:postgresql://postgres:5432/${POSTGRES_DB:-carevoice}
-  DATABASE_USER: ${POSTGRES_USER:-carevoice}
+  DATABASE_USER: ${POSTGRES_USER:-admin}
   DATABASE_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
   DATABASE_MIGRATE_ON_STARTUP: "false"
   REDIS_URL: redis://redis:6379
-  RABBITMQ_URL: amqp://${RABBITMQ_USER:-carevoice}:${RABBITMQ_PASSWORD:?set RABBITMQ_PASSWORD in .env}@rabbitmq:5672/${RABBITMQ_VHOST:-carevoice}
+  RABBITMQ_URL: amqp://${RABBITMQ_USER:-admin}:${RABBITMQ_PASSWORD:?set RABBITMQ_PASSWORD in .env}@rabbitmq:5672/${RABBITMQ_VHOST:-carevoice}
   ALERT_SERVICE_URL: http://alert-service:8081
   # Application log level (com.carevoice.*); libraries keep INFO/WARN. DEBUG locally, INFO in Kubernetes.
   LOG_LEVEL: ${LOG_LEVEL:-DEBUG}
@@ -52,7 +52,7 @@ x-alert-env: &alert-env
   MONGO_URI: mongodb://mongo:27017/?replicaSet=rs0
   MONGO_DATABASE: ${MONGO_DATABASE:-carevoice_alerts}
   MONGO_MIGRATE_ON_STARTUP: "false"
-  RABBITMQ_URL: amqp://${RABBITMQ_USER:-carevoice}:${RABBITMQ_PASSWORD:?set RABBITMQ_PASSWORD in .env}@rabbitmq:5672/${RABBITMQ_VHOST:-carevoice}
+  RABBITMQ_URL: amqp://${RABBITMQ_USER:-admin}:${RABBITMQ_PASSWORD:?set RABBITMQ_PASSWORD in .env}@rabbitmq:5672/${RABBITMQ_VHOST:-carevoice}
   # Application log level (com.carevoice.*); libraries keep INFO/WARN. DEBUG locally, INFO in Kubernetes.
   LOG_LEVEL: ${LOG_LEVEL:-DEBUG}
   OTEL_SERVICE_NAME: alert-service
@@ -82,7 +82,7 @@ services:
       - log_parameter_max_length_on_error=0
     environment:
       POSTGRES_DB: ${POSTGRES_DB:-carevoice}
-      POSTGRES_USER: ${POSTGRES_USER:-carevoice}
+      POSTGRES_USER: ${POSTGRES_USER:-admin}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
     volumes:
       - postgres-data:/var/lib/postgresql/data
@@ -175,7 +175,7 @@ services:
     restart: unless-stopped
     hostname: rabbitmq # the node name (rabbit@<hostname>) and with it the data directory must stay stable
     environment:
-      RABBITMQ_DEFAULT_USER: ${RABBITMQ_USER:-carevoice}
+      RABBITMQ_DEFAULT_USER: ${RABBITMQ_USER:-admin}
       RABBITMQ_DEFAULT_PASS: ${RABBITMQ_PASSWORD:?set RABBITMQ_PASSWORD in .env}
       RABBITMQ_DEFAULT_VHOST: ${RABBITMQ_VHOST:-carevoice}
     # The rabbitmq_prometheus plugin (port 15692) is already enabled in the official image, and the management
@@ -450,7 +450,7 @@ services:
     environment:
       KUMA_URL: http://uptime-kuma:3001
       KUMA_USERNAME: ${KUMA_USERNAME:-admin}
-      KUMA_PASSWORD: ${KUMA_PASSWORD:-carevoice-admin-1}
+      KUMA_PASSWORD: ${KUMA_PASSWORD:-admin}
       CAREVOICE_DOMAIN: ${CAREVOICE_DOMAIN:-carevoice.127.0.0.1.nip.io}
     volumes:
       - ./deploy/uptime-kuma/setup.py:/setup.py:ro
@@ -467,7 +467,7 @@ services:
     restart: unless-stopped
     environment:
       PGADMIN_DEFAULT_EMAIL: admin@carevoice.dev
-      PGADMIN_DEFAULT_PASSWORD: ${PGADMIN_PASSWORD:-carevoice-admin-1}
+      PGADMIN_DEFAULT_PASSWORD: ${PGADMIN_PASSWORD:-admin}
       PGADMIN_CONFIG_SERVER_MODE: "False"
       PGADMIN_CONFIG_MASTER_PASSWORD_REQUIRED: "False"
     volumes:
@@ -493,7 +493,7 @@ services:
     environment:
       ME_CONFIG_MONGODB_URL: mongodb://mongo:27017/?directConnection=true
       ME_CONFIG_BASICAUTH_USERNAME: admin
-      ME_CONFIG_BASICAUTH_PASSWORD: ${MONGO_EXPRESS_PASSWORD:-carevoice-admin-1}
+      ME_CONFIG_BASICAUTH_PASSWORD: ${MONGO_EXPRESS_PASSWORD:-admin}
     depends_on:
       mongo-init:
         condition: service_completed_successfully

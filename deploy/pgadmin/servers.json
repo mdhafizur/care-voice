@@ -6,7 +6,7 @@
       "Host": "postgres",
       "Port": 5432,
       "MaintenanceDB": "carevoice",
-      "Username": "carevoice",
+      "Username": "admin",
       "SSLMode": "prefer",
       "Comment": "Password: POSTGRES_PASSWORD from .env. Resident names and transcript text are AES-GCM ciphertext by design."
     }

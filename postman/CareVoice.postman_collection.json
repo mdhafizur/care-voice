@@ -36,7 +36,7 @@
     },
     {
       "key": "demoPassword",
-      "value": "demo-password-change-me",
+      "value": "admin123",
       "description": "DEMO_PASSWORD from .env"
     },
     {
