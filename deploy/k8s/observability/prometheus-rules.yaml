@@ -1,0 +1,50 @@
+# Prometheus alerting rules for the Kubernetes setup, loaded through rule_files in prometheus.yaml (mounted from the
+# ConfigMap prometheus-rules by make k8s-up). Firing alerts show in Grafana under Alerting (data source-managed rules)
+# and in Prometheus' /alerts. Metrics come from CloudNativePG's exporter (job "postgres").
+groups:
+  - name: carevoice-postgres-backups
+    rules:
+      # The last archive attempt failed after the last success: WAL is no longer reaching object storage, so the
+      # point-in-time recovery window stops growing. Primary only (replicas do not archive).
+      - alert: PostgresWalArchivingFailing
+        expr: |
+          (cnpg_pg_stat_archiver_last_failed_time > cnpg_pg_stat_archiver_last_archived_time)
+            and on (instance) (cnpg_pg_replication_in_recovery == 0)
+        for: 10m
+        labels:
+          severity: critical
+        annotations:
+          summary: "PostgreSQL WAL archiving is failing on {{ $labels.instance }}"
+          description: >-
+            Archived WAL is not reaching the backup bucket, so point-in-time recovery no longer covers new writes, and
+            unarchived WAL accumulates on the primary's disk until it is full. Check the plugin-barman-cloud sidecar
+            logs and the object storage.
+
+      # Finished WAL segments waiting to be archived (.ready files). A few are normal under load; a growing backlog
+      # means archiving is slower than writing or stuck, and the disk fills up.
+      - alert: PostgresWalArchiveBacklog
+        expr: max by (instance) (cnpg_collector_pg_wal_archive_status{value="ready"}) > 10
+        for: 15m
+        labels:
+          severity: warning
+        annotations:
+          summary: "{{ $value }} WAL segments waiting to be archived on {{ $labels.instance }}"
+          description: >-
+            WAL archiving is behind. Data written since then is not yet recoverable from backups, and the primary's
+            disk keeps the segments until they are archived.
+
+  - name: carevoice-events
+    rules:
+      # Events that alert-service gave up on (after ~43 minutes of retries, or malformed). Every one is a vital sign
+      # that did not produce its alert. Replay after fixing the cause: make dlq-replay (compose) or the
+      # `alert-service replay-dead-letters` command as a Job (Kubernetes).
+      - alert: AlertEventsDeadLettered
+        expr: max(rabbitmq_queue_messages{queue="alert-service.observations.dlq"}) > 0
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "{{ $value }} observation events in the dead-letter queue"
+          description: >-
+            These events did not produce alerts. Find the cause in the logs ("Event dead-lettered", field reason),
+            fix it, then replay them.

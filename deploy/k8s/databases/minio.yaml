@@ -1,0 +1,93 @@
+# S3-compatible object storage for the PostgreSQL backups (base backups + archived WAL), local stand-in for S3/GCS/Azure
+# Blob. In production the bucket lives in another region, with versioning and object lock, so the incident (or the
+# credential) that destroys the database cannot destroy its backups too.
+# Credentials: Secret carevoice-backup-s3 (keys ACCESS_KEY_ID / ACCESS_SECRET_KEY), created once by make k8s-up.
+# Pinned: the MinIO community edition no longer publishes new images, so this is a fixed, known release.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: minio-data
+spec:
+  accessModes: [ReadWriteOnce]
+  resources:
+    requests:
+      storage: 4Gi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: minio
+  labels: { app.kubernetes.io/name: minio, app.kubernetes.io/component: backup-storage }
+spec:
+  replicas: 1
+  strategy: { type: Recreate }
+  selector:
+    matchLabels: { app.kubernetes.io/name: minio }
+  template:
+    metadata:
+      labels: { app.kubernetes.io/name: minio, app.kubernetes.io/component: backup-storage }
+    spec:
+      containers:
+        - name: minio
+          image: minio/minio:RELEASE.2025-04-22T22-12-26Z
+          args: ["server", "/data", "--address", ":9000"]
+          env:
+            - name: MINIO_ROOT_USER
+              valueFrom: { secretKeyRef: { name: carevoice-backup-s3, key: ACCESS_KEY_ID } }
+            - name: MINIO_ROOT_PASSWORD
+              valueFrom: { secretKeyRef: { name: carevoice-backup-s3, key: ACCESS_SECRET_KEY } }
+          ports:
+            - { name: s3, containerPort: 9000 }
+          readinessProbe:
+            httpGet: { path: /minio/health/ready, port: s3 }
+            periodSeconds: 5
+          livenessProbe:
+            httpGet: { path: /minio/health/live, port: s3 }
+            periodSeconds: 20
+          resources:
+            requests: { cpu: 50m, memory: 128Mi }
+            limits: { memory: 512Mi }
+          volumeMounts:
+            - { name: data, mountPath: /data }
+      volumes:
+        - name: data
+          persistentVolumeClaim: { claimName: minio-data }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: minio
+spec:
+  selector: { app.kubernetes.io/name: minio }
+  ports:
+    - { name: s3, port: 9000, targetPort: s3 }
+---
+# Creates the backup bucket once MinIO answers (idempotent: "already owned by you" counts as success). curl signs the
+# request itself (--aws-sigv4), so no MinIO client image is needed.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: minio-create-backup-bucket
+spec:
+  backoffLimit: 30
+  ttlSecondsAfterFinished: 600
+  template:
+    spec:
+      restartPolicy: OnFailure
+      containers:
+        - name: create-bucket
+          image: curlimages/curl:8.11.1
+          env:
+            - name: ACCESS_KEY_ID
+              valueFrom: { secretKeyRef: { name: carevoice-backup-s3, key: ACCESS_KEY_ID } }
+            - name: ACCESS_SECRET_KEY
+              valueFrom: { secretKeyRef: { name: carevoice-backup-s3, key: ACCESS_SECRET_KEY } }
+          command:
+            - sh
+            - -c
+            - |
+              status=$(curl -s -o /dev/null -w '%{http_code}' -X PUT \
+                --aws-sigv4 "aws:amz:us-east-1:s3" --user "$ACCESS_KEY_ID:$ACCESS_SECRET_KEY" \
+                http://minio:9000/carevoice-pg-backups)
+              echo "PUT bucket: HTTP $status"
+              [ "$status" = 200 ] || [ "$status" = 409 ]

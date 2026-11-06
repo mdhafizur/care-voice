@@ -17,7 +17,7 @@ TEST_FILTER := $(if $(TEST),--tests '$(TEST)',)
         format lint coverage coverage-verify pitest pact sbom run-documentation run-alert \
         load-smoke load load-stress deps refresh clean \
         up up-fast images-fast down logs ps migrate dlq-replay db-shell mongo-shell redis-cli rabbitmq-ui grafana monitoring-up admin-up tools-up observability-reset \
-        security-scan db-bench demo demo-check reset-demo k8s-up k8s-down k8s-status k8s-cache-clean
+        security-scan db-bench demo demo-check reset-demo k8s-up k8s-down k8s-status k8s-cache-clean k8s-pg-restore-drill
 
 help: ## List all targets
 	@awk 'BEGIN {FS = ":.*?## "} /^[a-zA-Z0-9_-]+:.*?## / {printf "  \033[36m%-20s\033[0m %s\n", $$1, $$2}' $(MAKEFILE_LIST)
@@ -215,11 +215,16 @@ K8S_TAG          ?= local
 CERT_MANAGER_VER ?= v1.21.2
 CNPG_VER         ?= 1.30.1
 RABBITMQ_OP_VER  ?= v2.23.0
+BARMAN_PLUGIN_VER ?= v0.15.1
 HELM_TIMEOUT     ?= 10m
 
 k8s-up: ## Create the k3d cluster, operators, databases, Grafana, import images, deploy the chart (scripts/k8s-up.sh)
 	K8S_CLUSTER=$(K8S_CLUSTER) K8S_NAMESPACE=$(K8S_NAMESPACE) K8S_TAG=$(K8S_TAG) CERT_MANAGER_VER=$(CERT_MANAGER_VER) \
-	  CNPG_VER=$(CNPG_VER) RABBITMQ_OP_VER=$(RABBITMQ_OP_VER) HELM_TIMEOUT=$(HELM_TIMEOUT) bash scripts/k8s-up.sh
+	  CNPG_VER=$(CNPG_VER) RABBITMQ_OP_VER=$(RABBITMQ_OP_VER) BARMAN_PLUGIN_VER=$(BARMAN_PLUGIN_VER) \
+	  HELM_TIMEOUT=$(HELM_TIMEOUT) bash scripts/k8s-up.sh
+
+k8s-pg-restore-drill: ## Prove the Postgres backups: write a row, restore to a time before it into a scratch cluster, check (KEEP=1 keeps it)
+	K8S_NAMESPACE=$(K8S_NAMESPACE) KEEP=$(KEEP) bash scripts/k8s-pg-restore-drill.sh
 
 k8s-down: ## Delete the local k3d cluster (all data in it is lost; the image caches are kept)
 	k3d cluster delete $(K8S_CLUSTER)
@@ -232,5 +237,6 @@ k8s-status: ## Show nodes, pods, jobs, HPAs, ingresses and certificates of the l
 	kubectl get nodes -o wide
 	kubectl -n $(K8S_NAMESPACE) get pods,jobs,hpa,pdb,ingress -o wide
 	-kubectl -n $(K8S_NAMESPACE) get clusters.postgresql.cnpg.io,poolers.postgresql.cnpg.io,rabbitmqclusters,certificates
+	-kubectl -n $(K8S_NAMESPACE) get objectstores.barmancloud.cnpg.io,scheduledbackups.postgresql.cnpg.io,backups.postgresql.cnpg.io
 	-kubectl -n observability get pods,ingress
 	-helm -n $(K8S_NAMESPACE) status carevoice

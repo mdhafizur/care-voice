@@ -11,6 +11,7 @@ TAG=${K8S_TAG:-local}
 CERT_MANAGER_VER=${CERT_MANAGER_VER:-v1.21.2}
 CNPG_VER=${CNPG_VER:-1.30.1}
 RABBITMQ_OP_VER=${RABBITMQ_OP_VER:-v2.23.0}
+BARMAN_PLUGIN_VER=${BARMAN_PLUGIN_VER:-v0.15.1}
 HELM_TIMEOUT=${HELM_TIMEOUT:-10m}
 
 step() { printf '\n\033[1;36m==> %s\033[0m\n' "$*"; }
@@ -69,7 +70,7 @@ if [ "${K8S_PRELOAD:-0}" = "1" ]; then
   k3d image import -c "$CLUSTER" $PRELOAD_IMAGES || echo "pre-load failed; the nodes will pull the images themselves"
 fi
 
-step "Operators: cert-manager $CERT_MANAGER_VER, CloudNativePG $CNPG_VER, RabbitMQ $RABBITMQ_OP_VER"
+step "Operators: cert-manager $CERT_MANAGER_VER, CloudNativePG $CNPG_VER (+ Barman Cloud plugin $BARMAN_PLUGIN_VER), RabbitMQ $RABBITMQ_OP_VER"
 # Order matters: the RabbitMQ operator manifest contains cert-manager resources (its webhook certificate), and
 # cert-manager's webhook must answer before anything cert-manager-related can be created.
 # Waits until a Deployment is Available. Not `kubectl rollout status`: that gives up as soon as the Deployment passes its
@@ -95,6 +96,10 @@ kubectl apply --server-side -f "https://raw.githubusercontent.com/cloudnative-pg
 retry 12 kubectl apply -f "https://github.com/rabbitmq/cluster-operator/releases/download/$RABBITMQ_OP_VER/cluster-operator.yml" >/dev/null
 wait_ready cnpg-system cnpg-controller-manager
 wait_ready rabbitmq-system rabbitmq-cluster-operator
+# WAL archiving and base backups (ADR-0026). Needs CloudNativePG >= 1.26 and cert-manager (its gRPC TLS certificates),
+# so it comes after both; installs into cnpg-system next to the operator.
+retry 12 kubectl apply -f "https://github.com/cloudnative-pg/plugin-barman-cloud/releases/download/$BARMAN_PLUGIN_VER/manifest.yaml" >/dev/null
+wait_ready cnpg-system barman-cloud
 
 step "Namespace $NS and secrets from .env"
 kubectl create namespace "$NS" --dry-run=client -o yaml | kubectl apply -f -
@@ -109,8 +114,18 @@ kubectl -n "$NS" create secret generic carevoice-secrets \
 kubectl -n "$NS" create secret generic carevoice-pg-app --type=kubernetes.io/basic-auth \
   --from-literal=username=carevoice --from-literal=password="$POSTGRES_PASSWORD" \
   --dry-run=client -o yaml | kubectl apply -f -
+# Backup storage credentials: generated once and then kept, because MinIO and the archived backups are bound to them.
+if ! kubectl -n "$NS" get secret carevoice-backup-s3 >/dev/null 2>&1; then
+  kubectl -n "$NS" create secret generic carevoice-backup-s3 \
+    --from-literal=ACCESS_KEY_ID=carevoice-backup \
+    --from-literal=ACCESS_SECRET_KEY="$(LC_ALL=C tr -dc 'A-Za-z0-9' </dev/urandom | head -c 40)"
+fi
 
-step "Databases: PostgreSQL (2 instances + PgBouncer), MongoDB rs0 (3), Redis, RabbitMQ (3 nodes)"
+step "Databases: backup storage (MinIO), PostgreSQL (2 instances + PgBouncer + WAL archiving), MongoDB rs0 (3), Redis, RabbitMQ (3 nodes)"
+# The backup bucket must exist before PostgreSQL archives its first WAL segment.
+kubectl -n "$NS" apply -f deploy/k8s/databases/minio.yaml
+wait_ready "$NS" minio
+kubectl -n "$NS" wait --for=condition=complete job/minio-create-backup-bucket --timeout=600s
 kubectl -n "$NS" apply -f deploy/k8s/databases/
 echo "waiting for PostgreSQL (first run pulls images, can take a few minutes)..."
 for i in $(seq 1 60); do kubectl -n "$NS" get cluster.postgresql.cnpg.io/carevoice-pg >/dev/null 2>&1 && break; sleep 2; done
@@ -131,6 +146,7 @@ cm grafana-dashboards --from-file=deploy/grafana/dashboards/
 cm grafana-dashboard-provider --from-file=carevoice.yaml=deploy/grafana/provisioning/dashboards/carevoice.yaml
 cm grafana-datasources --from-file=grafana-datasources.yaml=deploy/grafana/provisioning/datasources/grafana-datasources.yaml
 cm prometheus-config --from-file=prometheus.yaml=deploy/k8s/observability/prometheus.yaml
+cm prometheus-rules --from-file=carevoice-rules.yaml=deploy/k8s/observability/prometheus-rules.yaml
 cm otel-collector-config --from-file=otelcol-config.yaml=deploy/otel-collector/otelcol-config.yaml
 kubectl -n observability apply -f deploy/k8s/observability/otel-lgtm.yaml
 kubectl -n observability rollout restart deploy/otel-lgtm >/dev/null   # pick up ConfigMap changes
@@ -154,5 +170,6 @@ API:      http://carevoice.127.0.0.1.nip.io:9080        (https on :9443, self-si
 Swagger:  http://carevoice.127.0.0.1.nip.io:9080/docs
 Grafana:  http://grafana.carevoice.127.0.0.1.nip.io:9080
 Status:   make k8s-status
+Backups:  make k8s-pg-restore-drill   (point-in-time restore into a scratch cluster, then verified)
 alert-service is cluster-internal; reach it with: kubectl -n $NS port-forward svc/alert-service 18081:8081
 EOF

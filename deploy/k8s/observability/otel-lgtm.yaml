@@ -48,6 +48,9 @@ spec:
             - name: prometheus
               mountPath: /otel-lgtm/prometheus.yaml
               subPath: prometheus.yaml
+            - name: prometheus-rules
+              mountPath: /otel-lgtm/carevoice-rules.yaml
+              subPath: carevoice-rules.yaml
             # Drops probe traces (/livez, /readyz, /metrics) before Tempo; deploy/otel-collector/otelcol-config.yaml.
             - name: otel-collector
               mountPath: /otel-lgtm/otelcol-config.yaml
@@ -63,6 +66,8 @@ spec:
           configMap: { name: grafana-datasources }
         - name: prometheus
           configMap: { name: prometheus-config }
+        - name: prometheus-rules
+          configMap: { name: prometheus-rules }
         - name: otel-collector
           configMap: { name: otel-collector-config }
 ---

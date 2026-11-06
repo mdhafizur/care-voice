@@ -1,6 +1,35 @@
 # PostgreSQL for documentation-service, run by the CloudNativePG operator: primary + streaming replica with automatic
 # failover. Services: carevoice-pg-rw (primary, used by the migration Job), carevoice-pg-ro, carevoice-pg-r.
 # The app user's credentials come from the Secret carevoice-pg-app (created by make k8s-up from .env).
+#
+# Backups (ADR-0026): the Barman Cloud plugin archives every WAL segment to object storage (MinIO here) and a
+# ScheduledBackup takes a nightly base backup. Together they allow point-in-time recovery to any second within the
+# retention window. The replica protects against a lost server; the archive protects against a lost cluster and against
+# a bad write that the replica copies instantly. Proven by `make k8s-pg-restore-drill`.
+apiVersion: barmancloud.cnpg.io/v1
+kind: ObjectStore
+metadata:
+  name: carevoice-pg-backups
+spec:
+  # Base backups and WAL older than this are deleted (the newest backup that is needed to cover the window is kept).
+  retentionPolicy: "14d"
+  configuration:
+    destinationPath: s3://carevoice-pg-backups/
+    endpointURL: http://minio:9000
+    s3Credentials:
+      accessKeyId:
+        name: carevoice-backup-s3
+        key: ACCESS_KEY_ID
+      secretAccessKey:
+        name: carevoice-backup-s3
+        key: ACCESS_SECRET_KEY
+    wal:
+      compression: gzip
+      # Archive several finished segments in parallel when WAL is produced faster than one upload at a time.
+      maxParallel: 2
+    data:
+      compression: gzip
+---
 apiVersion: postgresql.cnpg.io/v1
 kind: Cluster
 metadata:
@@ -17,6 +46,16 @@ spec:
   postgresql:
     parameters:
       max_connections: "100"
+      # Switch to a new WAL segment (and so archive it) at least every 5 minutes when anything was written: bounds the
+      # data that could be lost if the whole cluster and its disks were gone (RPO). Losing one instance loses nothing.
+      archive_timeout: "5min"
+  # Continuous WAL archiving through the Barman Cloud plugin (CloudNativePG's in-tree barmanObjectStore is deprecated
+  # since 1.26). Runs as a sidecar on every instance; only the primary archives.
+  plugins:
+    - name: barman-cloud.cloudnative-pg.io
+      isWALArchiver: true
+      parameters:
+        barmanObjectName: carevoice-pg-backups
   bootstrap:
     initdb:
       database: carevoice
@@ -42,3 +81,35 @@ spec:
       default_pool_size: "20"
       # PgBouncer >= 1.21 tracks prepared statements in transaction mode, so the JDBC driver can keep using them.
       max_prepared_statements: "100"
+---
+# Nightly base backup (six-field cron, seconds first), taken from the replica so it does not load the primary.
+# immediate: the first backup runs right after creation, so a fresh cluster is recoverable without waiting for 02:00.
+apiVersion: postgresql.cnpg.io/v1
+kind: ScheduledBackup
+metadata:
+  name: carevoice-pg-nightly
+spec:
+  cluster:
+    name: carevoice-pg
+  schedule: "0 0 2 * * *"
+  immediate: true
+  backupOwnerReference: self
+  target: prefer-standby
+  method: plugin
+  pluginConfiguration:
+    name: barman-cloud.cloudnative-pg.io
+---
+# Headless Service over every PostgreSQL instance, for Prometheus to scrape CloudNativePG's exporter (port 9187):
+# WAL archiving health (cnpg_pg_stat_archiver_*), replication lag, connections.
+apiVersion: v1
+kind: Service
+metadata:
+  name: carevoice-pg-metrics
+spec:
+  clusterIP: None
+  selector:
+    cnpg.io/cluster: carevoice-pg
+    cnpg.io/podRole: instance
+  ports:
+    - name: metrics
+      port: 9187

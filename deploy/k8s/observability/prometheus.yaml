@@ -33,8 +33,20 @@ storage:
   tsdb:
     out_of_order_time_window: 10m
 
+# CareVoice alerting rules (prometheus-rules.yaml, mounted by otel-lgtm.yaml).
+rule_files:
+  - /otel-lgtm/carevoice-rules.yaml
+
 scrape_configs:
   # RabbitMQ Prometheus plugin on every node (headless Service of the RabbitMQ Cluster Operator).
+  # CloudNativePG's exporter on every PostgreSQL instance (headless Service carevoice-pg-metrics in postgres.yaml):
+  # WAL archiving, replication, connections. Used by the backup alerts in prometheus-rules.yaml.
+  - job_name: postgres
+    dns_sd_configs:
+      - names: ["carevoice-pg-metrics.carevoice.svc.cluster.local"]
+        type: A
+        port: 9187
+
   - job_name: rabbitmq
     metrics_path: /metrics/per-object
     dns_sd_configs:
