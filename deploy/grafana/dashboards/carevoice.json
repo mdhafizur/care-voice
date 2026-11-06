@@ -2336,6 +2336,350 @@
     },
     {
       "type": "row",
+      "title": "Backups (Kubernetes): PostgreSQL WAL archiving and the MinIO bucket",
+      "id": 59,
+      "collapsed": true,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 111
+      },
+      "panels": [
+        {
+          "type": "stat",
+          "title": "Time since last WAL upload",
+          "id": 53,
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "description": "Seconds since the primary last archived a WAL segment to object storage (CloudNativePG pg_stat_archiver). archive_timeout is 5 min, so this stays low while anything is written; on an idle database it may grow without a problem. Kubernetes only.",
+          "gridPos": {
+            "h": 6,
+            "w": 6,
+            "x": 0,
+            "y": 112
+          },
+          "fieldConfig": {
+            "defaults": {
+              "color": {
+                "mode": "thresholds"
+              },
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {
+                    "color": "green",
+                    "value": null
+                  },
+                  {
+                    "color": "orange",
+                    "value": 900
+                  },
+                  {
+                    "color": "red",
+                    "value": 3600
+                  }
+                ]
+              },
+              "unit": "s",
+              "noValue": "no data (Kubernetes only)"
+            }
+          },
+          "options": {
+            "reduceOptions": {
+              "calcs": [
+                "last"
+              ],
+              "fields": "",
+              "values": false
+            },
+            "colorMode": "background",
+            "graphMode": "area",
+            "textMode": "value",
+            "orientation": "auto"
+          },
+          "targets": [
+            {
+              "refId": "A",
+              "datasource": {
+                "type": "prometheus",
+                "uid": "prometheus"
+              },
+              "expr": "max(cnpg_pg_stat_archiver_seconds_since_last_archival and on (instance) (cnpg_pg_replication_in_recovery == 0))",
+              "legendFormat": ""
+            }
+          ]
+        },
+        {
+          "type": "stat",
+          "title": "Failed WAL uploads (last hour)",
+          "id": 54,
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "description": "Archive attempts that failed in the last hour on the primary. Anything above 0 means writes may not be recoverable yet; alert PostgresWalArchivingFailing fires after 10 minutes of failures. Kubernetes only.",
+          "gridPos": {
+            "h": 6,
+            "w": 6,
+            "x": 6,
+            "y": 112
+          },
+          "fieldConfig": {
+            "defaults": {
+              "color": {
+                "mode": "thresholds"
+              },
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {
+                    "color": "green",
+                    "value": null
+                  },
+                  {
+                    "color": "red",
+                    "value": 1
+                  }
+                ]
+              },
+              "unit": "none",
+              "noValue": "no data (Kubernetes only)",
+              "decimals": 0
+            }
+          },
+          "options": {
+            "reduceOptions": {
+              "calcs": [
+                "last"
+              ],
+              "fields": "",
+              "values": false
+            },
+            "colorMode": "background",
+            "graphMode": "area",
+            "textMode": "value",
+            "orientation": "auto"
+          },
+          "targets": [
+            {
+              "refId": "A",
+              "datasource": {
+                "type": "prometheus",
+                "uid": "prometheus"
+              },
+              "expr": "max(increase(cnpg_pg_stat_archiver_failed_count[1h]) and on (instance) (cnpg_pg_replication_in_recovery == 0))",
+              "legendFormat": ""
+            }
+          ]
+        },
+        {
+          "type": "timeseries",
+          "title": "WAL files waiting to upload",
+          "id": 55,
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "description": "Finished WAL segments not archived yet (.ready files), per instance. A few under load are normal; a growing line means archiving is behind and the primary's disk fills (alert PostgresWalArchiveBacklog above 10). Kubernetes only.",
+          "gridPos": {
+            "h": 6,
+            "w": 12,
+            "x": 12,
+            "y": 112
+          },
+          "fieldConfig": {
+            "defaults": {
+              "unit": "none"
+            },
+            "overrides": []
+          },
+          "options": {
+            "legend": {
+              "displayMode": "list",
+              "placement": "bottom"
+            },
+            "tooltip": {
+              "mode": "multi"
+            }
+          },
+          "targets": [
+            {
+              "refId": "A",
+              "datasource": {
+                "type": "prometheus",
+                "uid": "prometheus"
+              },
+              "expr": "max by (instance) (cnpg_collector_pg_wal_archive_status{value=\"ready\"})",
+              "legendFormat": "{{instance}}"
+            }
+          ]
+        },
+        {
+          "type": "stat",
+          "title": "Backup bucket size",
+          "id": 56,
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "description": "Size of the bucket carevoice-pg-backups in MinIO: base backups plus archived WAL, gzip-compressed. Updated by MinIO's background scanner, so it lags a few minutes. Kubernetes only.",
+          "gridPos": {
+            "h": 6,
+            "w": 6,
+            "x": 0,
+            "y": 118
+          },
+          "fieldConfig": {
+            "defaults": {
+              "color": {
+                "mode": "thresholds"
+              },
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {
+                    "color": "green",
+                    "value": null
+                  }
+                ]
+              },
+              "unit": "bytes",
+              "noValue": "no data (Kubernetes only)"
+            }
+          },
+          "options": {
+            "reduceOptions": {
+              "calcs": [
+                "last"
+              ],
+              "fields": "",
+              "values": false
+            },
+            "colorMode": "background",
+            "graphMode": "area",
+            "textMode": "value",
+            "orientation": "auto"
+          },
+          "targets": [
+            {
+              "refId": "A",
+              "datasource": {
+                "type": "prometheus",
+                "uid": "prometheus"
+              },
+              "expr": "max(minio_bucket_usage_total_bytes{bucket=\"carevoice-pg-backups\"})",
+              "legendFormat": ""
+            }
+          ]
+        },
+        {
+          "type": "stat",
+          "title": "Backup objects (base backups + WAL files)",
+          "id": 57,
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "description": "Number of objects in carevoice-pg-backups. Grows with every archived WAL segment; drops when the 14-day retention deletes old backups. Kubernetes only.",
+          "gridPos": {
+            "h": 6,
+            "w": 6,
+            "x": 6,
+            "y": 118
+          },
+          "fieldConfig": {
+            "defaults": {
+              "color": {
+                "mode": "thresholds"
+              },
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {
+                    "color": "green",
+                    "value": null
+                  }
+                ]
+              },
+              "unit": "none",
+              "noValue": "no data (Kubernetes only)",
+              "decimals": 0
+            }
+          },
+          "options": {
+            "reduceOptions": {
+              "calcs": [
+                "last"
+              ],
+              "fields": "",
+              "values": false
+            },
+            "colorMode": "background",
+            "graphMode": "area",
+            "textMode": "value",
+            "orientation": "auto"
+          },
+          "targets": [
+            {
+              "refId": "A",
+              "datasource": {
+                "type": "prometheus",
+                "uid": "prometheus"
+              },
+              "expr": "max(minio_bucket_usage_object_total{bucket=\"carevoice-pg-backups\"})",
+              "legendFormat": ""
+            }
+          ]
+        },
+        {
+          "type": "timeseries",
+          "title": "Backup bucket size over time",
+          "id": 58,
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "description": "Bucket size over time: steps up with each nightly base backup, steady growth from WAL, steps down when retention removes backups older than 14 days. Kubernetes only.",
+          "gridPos": {
+            "h": 6,
+            "w": 12,
+            "x": 12,
+            "y": 118
+          },
+          "fieldConfig": {
+            "defaults": {
+              "unit": "bytes"
+            },
+            "overrides": []
+          },
+          "options": {
+            "legend": {
+              "displayMode": "list",
+              "placement": "bottom"
+            },
+            "tooltip": {
+              "mode": "multi"
+            }
+          },
+          "targets": [
+            {
+              "refId": "A",
+              "datasource": {
+                "type": "prometheus",
+                "uid": "prometheus"
+              },
+              "expr": "max(minio_bucket_usage_total_bytes{bucket=\"carevoice-pg-backups\"})",
+              "legendFormat": "carevoice-pg-backups"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "type": "row",
       "title": "Logs",
       "id": 41,
       "collapsed": false,
@@ -2343,7 +2687,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 111
+        "y": 112
       },
       "panels": []
     },
@@ -2359,7 +2703,7 @@
         "h": 12,
         "w": 24,
         "x": 0,
-        "y": 112
+        "y": 113
       },
       "options": {
         "showTime": true,
@@ -2392,7 +2736,7 @@
         "h": 12,
         "w": 24,
         "x": 0,
-        "y": 124
+        "y": 125
       },
       "options": {
         "showTime": true,

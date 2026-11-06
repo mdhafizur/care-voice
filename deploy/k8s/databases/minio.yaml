@@ -2,6 +2,9 @@
 # Blob. In production the bucket lives in another region, with versioning and object lock, so the incident (or the
 # credential) that destroys the database cannot destroy its backups too.
 # Credentials: Secret carevoice-backup-s3 (keys ACCESS_KEY_ID / ACCESS_SECRET_KEY), created once by make k8s-up.
+# Console: http://minio.carevoice.127.0.0.1.nip.io:9080, log in with that Secret:
+#   kubectl -n carevoice get secret carevoice-backup-s3 -o jsonpath='{.data.ACCESS_SECRET_KEY}' | base64 -d
+# Metrics: /minio/v2/metrics/cluster and /minio/v2/metrics/bucket, scraped by Prometheus (job minio).
 # Pinned: the MinIO community edition no longer publishes new images, so this is a fixed, known release.
 apiVersion: v1
 kind: PersistentVolumeClaim
@@ -30,14 +33,22 @@ spec:
       containers:
         - name: minio
           image: minio/minio:RELEASE.2025-04-22T22-12-26Z
-          args: ["server", "/data", "--address", ":9000"]
+          args: ["server", "/data", "--address", ":9000", "--console-address", ":9001"]
           env:
             - name: MINIO_ROOT_USER
               valueFrom: { secretKeyRef: { name: carevoice-backup-s3, key: ACCESS_KEY_ID } }
             - name: MINIO_ROOT_PASSWORD
               valueFrom: { secretKeyRef: { name: carevoice-backup-s3, key: ACCESS_SECRET_KEY } }
+            # Local only: Prometheus scrapes the metrics without a token. In production keep the default (jwt) and
+            # give Prometheus a bearer token from `mc admin prometheus generate`.
+            - name: MINIO_PROMETHEUS_AUTH_TYPE
+              value: public
+            # The console is served at the root of its own host name behind Traefik.
+            - name: MINIO_BROWSER_REDIRECT_URL
+              value: http://minio.carevoice.127.0.0.1.nip.io:9080
           ports:
             - { name: s3, containerPort: 9000 }
+            - { name: console, containerPort: 9001 }
           readinessProbe:
             httpGet: { path: /minio/health/ready, port: s3 }
             periodSeconds: 5
@@ -61,6 +72,27 @@ spec:
   selector: { app.kubernetes.io/name: minio }
   ports:
     - { name: s3, port: 9000, targetPort: s3 }
+    - { name: console, port: 9001, targetPort: console }
+---
+# The MinIO console through the cluster's Traefik (k3d load balancer :9080): browse the base backups and WAL files,
+# e.g. right after `make k8s-pg-restore-drill`. Only the console is exposed, never the S3 API.
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: minio-console
+spec:
+  ingressClassName: traefik
+  rules:
+    - host: minio.carevoice.127.0.0.1.nip.io
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: minio
+                port:
+                  name: console
 ---
 # Creates the backup bucket once MinIO answers (idempotent: "already owned by you" counts as success). curl signs the
 # request itself (--aws-sigv4), so no MinIO client image is needed.

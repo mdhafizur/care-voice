@@ -47,6 +47,17 @@ scrape_configs:
         type: A
         port: 9187
 
+  # MinIO (backup storage): bucket size and object count of carevoice-pg-backups for the dashboard's Backups row.
+  # Public metrics locally (MINIO_PROMETHEUS_AUTH_TYPE=public in minio.yaml).
+  - job_name: minio
+    metrics_path: /minio/v2/metrics/bucket
+    static_configs:
+      - targets: ["minio.carevoice.svc.cluster.local:9000"]
+  - job_name: minio-cluster
+    metrics_path: /minio/v2/metrics/cluster
+    static_configs:
+      - targets: ["minio.carevoice.svc.cluster.local:9000"]
+
   - job_name: rabbitmq
     metrics_path: /metrics/per-object
     dns_sd_configs:

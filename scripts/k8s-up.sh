@@ -169,6 +169,8 @@ cat <<EOF
 API:      http://carevoice.127.0.0.1.nip.io:9080        (https on :9443, self-signed)
 Swagger:  http://carevoice.127.0.0.1.nip.io:9080/docs
 Grafana:  http://grafana.carevoice.127.0.0.1.nip.io:9080
+MinIO:    http://minio.carevoice.127.0.0.1.nip.io:9080  (user carevoice-backup, password:
+          kubectl -n $NS get secret carevoice-backup-s3 -o jsonpath='{.data.ACCESS_SECRET_KEY}' | base64 -d)
 Status:   make k8s-status
 Backups:  make k8s-pg-restore-drill   (point-in-time restore into a scratch cluster, then verified)
 alert-service is cluster-internal; reach it with: kubectl -n $NS port-forward svc/alert-service 18081:8081
