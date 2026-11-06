@@ -2,6 +2,7 @@ package com.carevoice.documentation.outbox
 
 import java.util.UUID
 import kotlin.time.Duration
+import kotlin.time.Duration.Companion.hours
 import kotlin.time.Duration.Companion.milliseconds
 import kotlin.time.Duration.Companion.seconds
 
@@ -14,7 +15,12 @@ import kotlin.time.Duration.Companion.seconds
  * @property pollInterval pause between claims when there was not a full batch of work.
  * @property lease how long a claimed row is invisible to other claimers. If this instance dies mid-publish, the row
  *   becomes due again after the lease and another instance takes it over.
- * @property maxAttempts failed publishes before a row is marked DEAD.
+ * @property maxAttempts failed publishes before a row may be marked DEAD (together with [retryFor]).
+ * @property retryFor minimum time a row keeps retrying after it was written. A retryable failure marks it DEAD only
+ *   when BOTH [maxAttempts] are used up AND the row is older than this. Counting attempts alone gave up after about
+ *   1.5 minutes of failures (10 attempts, 60 s cap), so an outage longer than that turned valid events DEAD whenever
+ *   the circuit breaker did not open first, e.g. on a quiet ward with too few calls to trip it. A row costs one call
+ *   per backoff window (at most one a minute), so retrying for a day is cheap.
  * @property backoffBase first retry window (full jitter, see [com.carevoice.documentation.resilience.Backoff]).
  * @property backoffCap largest retry window.
  */
@@ -27,6 +33,7 @@ data class OutboxSettings(
     val maxAttempts: Int = 10,
     val backoffBase: Duration = 500.milliseconds,
     val backoffCap: Duration = 60.seconds,
+    val retryFor: Duration = 24.hours,
 ) {
     init {
         require(batchSize >= 1) { "batchSize must be >= 1" }
@@ -36,6 +43,7 @@ data class OutboxSettings(
         require(lease.isPositive()) { "lease must be positive" }
         require(maxAttempts >= 1) { "maxAttempts must be >= 1" }
         require(backoffBase.isPositive() && backoffCap >= backoffBase) { "backoff needs 0 < base <= cap" }
+        require(!retryFor.isNegative()) { "retryFor must not be negative" }
     }
 }
 

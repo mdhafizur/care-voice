@@ -2,10 +2,15 @@ package com.carevoice.documentation.infrastructure.persistence
 
 import com.carevoice.documentation.application.ApplicationError
 import com.carevoice.documentation.application.TransactionRunner
+import com.carevoice.documentation.resilience.LogType
+import com.carevoice.documentation.resilience.event
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.slf4j.MDCContext
 import kotlinx.coroutines.withContext
+import org.slf4j.LoggerFactory
+import org.slf4j.event.Level
 import java.nio.ByteBuffer
 import java.security.MessageDigest
 import java.sql.Connection
@@ -15,6 +20,8 @@ import java.sql.SQLTransientConnectionException
 import javax.sql.DataSource
 import kotlin.coroutines.AbstractCoroutineContextElement
 import kotlin.coroutines.CoroutineContext
+import kotlin.random.Random
+import kotlin.time.Duration.Companion.milliseconds
 import kotlin.time.Duration.Companion.seconds
 
 /**
@@ -77,6 +84,46 @@ internal suspend fun <T> withConnection(dataSource: DataSource, block: (Connecti
     }
 }
 
+private val readRetryLog = LoggerFactory.getLogger("com.carevoice.documentation.infrastructure.persistence.ReadRetry")
+
+/**
+ * [withConnection] for a read. Outside a transaction, a read that fails because its connection was lost or refused
+ * (a Postgres failover, a restarted PgBouncer, a connection the pool still held from before) is retried ONCE on a
+ * fresh connection after a short jittered pause (100 to 300 ms); the pool has already evicted the broken connection.
+ * The nurse gets the data instead of a 503 for a blip that lasted less than a second.
+ *
+ * Deliberately not retried:
+ * - writes: the commit may have happened before the connection broke, so a retry could apply it twice. Clients retry
+ *   writes themselves, safely, with their Idempotency-Key.
+ * - anything inside [JdbcTransactions.inTransaction]: the transaction is gone, only the caller can repeat all of it.
+ * - a statement timeout (57014): the query is slow, and running it again doubles the load on a struggling database.
+ * - "no connection from the pool in time": the database is down, not blipping; waiting again only adds latency.
+ */
+internal suspend fun <T> withReadConnection(dataSource: DataSource, block: (Connection) -> T): T {
+    if (currentCoroutineContext()[TransactionConnection] != null) return withConnection(dataSource, block)
+    return withContext(Dispatchers.IO + MDCContext()) {
+        unavailableAs503 {
+            try {
+                dataSource.connection.use(block)
+            } catch (e: SQLException) {
+                if (!SqlStates.isConnectionLost(e)) throw e
+                readRetryLog.event(
+                    Level.WARN,
+                    LogType.DB_OPERATION,
+                    "Read failed on a lost connection; retrying once",
+                    "sqlState" to SqlStates.firstSqlState(e),
+                    "error" to e.javaClass.simpleName,
+                )
+                delay(Random.nextLong(READ_RETRY_MIN_MS, READ_RETRY_MAX_MS).milliseconds)
+                dataSource.connection.use(block)
+            }
+        }
+    }
+}
+
+private const val READ_RETRY_MIN_MS = 100L
+private const val READ_RETRY_MAX_MS = 300L
+
 /** How long a client should wait before retrying while the database is unreachable (`Retry-After`). */
 private val DATABASE_RETRY_AFTER = 2.seconds
 
@@ -133,4 +180,25 @@ object SqlStates {
     }
 
     private val RETRY_LATER = setOf("57P01", "57P02", "57P03", STATEMENT_TIMEOUT, IDLE_IN_TRANSACTION_TIMEOUT)
+
+    /** Server is shutting down or not accepting connections yet (e.g. during a failover). */
+    private val SERVER_GOING_AWAY = setOf("57P01", "57P02", "57P03")
+
+    /**
+     * True when an established or new connection broke (class 08, or the server going away: 57P01-57P03), which a read
+     * may retry once on a fresh connection. False when the pool could not hand out a connection in time
+     * ([SQLTransientConnectionException]): then the database is down, not blipping.
+     */
+    fun isConnectionLost(e: Throwable): Boolean {
+        val chain = generateSequence(e) { it.cause }.toList()
+        if (chain.any { it is SQLTransientConnectionException }) return false
+        return chain.any {
+            it is SQLException &&
+                it.sqlState?.let { state -> state.startsWith("08") || state in SERVER_GOING_AWAY } == true
+        }
+    }
+
+    /** The first SQLState in the cause chain, for logs (a code, never a message). */
+    fun firstSqlState(e: Throwable): String? =
+        generateSequence(e) { it.cause }.filterIsInstance<SQLException>().firstNotNullOfOrNull { it.sqlState }
 }

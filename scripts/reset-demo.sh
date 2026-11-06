@@ -58,7 +58,9 @@ $COMPOSE exec -T mongo mongosh --quiet "$MONGO_DB" --eval '
   print("alerts deleted: " + a + ", processed events deleted: " + p);'
 
 step "RabbitMQ: purging the alert queues"
-for queue in alert-service.observations alert-service.observations.retry alert-service.observations.dlq; do
+for queue in alert-service.observations alert-service.observations.retry alert-service.observations.retry.30s \
+  alert-service.observations.retry.120s alert-service.observations.retry.600s alert-service.observations.retry.1800s \
+  alert-service.observations.dlq; do
   $COMPOSE exec -T rabbitmq rabbitmqctl -q purge_queue -p "$VHOST" "$queue" 2>/dev/null &&
     echo "purged $queue" || echo "skipped $queue (not declared yet)"
 done

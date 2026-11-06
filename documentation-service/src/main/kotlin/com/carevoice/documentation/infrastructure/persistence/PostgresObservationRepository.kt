@@ -53,7 +53,7 @@ class PostgresObservationRepository(private val dataSource: DataSource) : Observ
     }
 
     override suspend fun findById(tenantId: String, wardId: String, observationId: UUID): ObservationRecord? =
-        withConnection(dataSource) { connection ->
+        withReadConnection(dataSource) { connection ->
             connection.queryOne(
                 "$SELECT_SQL WHERE tenant_id = ? AND ward_id = ? AND id = ?",
                 listOf(tenantId, wardId, observationId),
@@ -66,7 +66,7 @@ class PostgresObservationRepository(private val dataSource: DataSource) : Observ
         wardId: String,
         residentId: String,
         page: PageRequest,
-    ): Page<ObservationRecord> = withConnection(dataSource) { connection ->
+    ): Page<ObservationRecord> = withReadConnection(dataSource) { connection ->
         keysetPage(
             connection,
             Where(listOf("tenant_id = ?", "ward_id = ?", "resident_id = ?"), listOf(tenantId, wardId, residentId)),
@@ -79,7 +79,7 @@ class PostgresObservationRepository(private val dataSource: DataSource) : Observ
         wardId: String,
         filter: ObservationFilter,
         page: PageRequest,
-    ): Page<ObservationRecord> = withConnection(dataSource) { connection ->
+    ): Page<ObservationRecord> = withReadConnection(dataSource) { connection ->
         val conditions = mutableListOf("tenant_id = ?", "ward_id = ?")
         val params = mutableListOf<Any?>(tenantId, wardId)
         if (filter.residentIds.isNotEmpty()) {
@@ -141,7 +141,7 @@ class PostgresObservationRepository(private val dataSource: DataSource) : Observ
         wardId: String,
         afterObservationId: UUID,
         limit: Int,
-    ): List<ObservationRecord> = withConnection(dataSource) { connection ->
+    ): List<ObservationRecord> = withReadConnection(dataSource) { connection ->
         connection.queryList(
             """
                 $SELECT_SQL

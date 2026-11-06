@@ -17,6 +17,7 @@ import com.rabbitmq.client.Delivery
 import com.rabbitmq.client.Recoverable
 import com.rabbitmq.client.RecoveryListener
 import io.micrometer.core.instrument.Counter
+import io.micrometer.core.instrument.Gauge
 import io.micrometer.core.instrument.MeterRegistry
 import io.micrometer.core.instrument.Timer
 import kotlinx.coroutines.CancellationException
@@ -46,11 +47,18 @@ import kotlinx.coroutines.channels.Channel as CoroutineChannel
  * - Manual acks, and the ack is sent only AFTER the Mongo writes succeeded: if the pod dies mid-processing the broker
  *   redelivers the message to another consumer instead of losing it.
  * - Duplicate `eventId` → ack (the use case already returns the stored result).
- * - Transient failure (Mongo unavailable) → `basicNack(requeue = false)`: the queue dead-letters it to the retry
- *   queue, which returns it after 5 s. Requeueing directly would spin the message at full speed while Mongo is down.
- * - From the [MAX_DELIVERIES]th delivery on (counted from the `x-death` header) a failing message is published to the
- *   DLX and acked: a poison message must not circulate forever.
+ * - Transient failure (Mongo unavailable) → the message is published to the retry tier for its attempt (5 s, 30 s,
+ *   2 min, 10 min, 30 min; [AmqpTopology.RETRY_DELAYS]) with the next attempt number in [HEADER_ATTEMPT], and the
+ *   original is acked only after the broker confirmed the copy. Requeueing directly would spin the message at full
+ *   speed while Mongo is down; growing delays ride out a failover or a short outage without hammering a recovering
+ *   database. If that publish fails, the message is nacked and the main queue dead-letters it to the 5 s tier.
+ * - When delivery [MAX_DELIVERIES] fails too, the message is published to the DLX and acked: a poison message must
+ *   not circulate forever. `replay-dead-letters` moves it back once the cause is fixed ([DeadLetterReplayer]).
  * - Invalid JSON, unknown `schemaVersion` or invalid values can never succeed → straight to the DLX.
+ * - MongoDB down (not a blip, [pauseWhileDown] confirms it): the consumer PAUSES instead of retrying. It cancels its
+ *   subscription, puts every in-flight message back in the queue without counting an attempt (`nack` with requeue),
+ *   checks the dependency every [healthPollInterval] and subscribes again once it is healthy. During a long outage the
+ *   messages wait safely in the replicated queue, in order, instead of using up their retries and landing in the DLQ.
  *
  * Backpressure: `basicQos(prefetch)` caps how many unacked messages the broker pushes to this consumer, so a slow
  * pod (or a slow Mongo) makes messages wait in the replicated queue, where other pods can take them, instead of
@@ -70,6 +78,9 @@ class ObservationEventConsumer(
     private val registry: MeterRegistry,
     private val workers: Int = DEFAULT_WORKERS,
     private val reconnectDelay: Duration = 5.seconds,
+    /** When set, a dependency failure that this check confirms pauses consumption instead of retrying the message. */
+    private val pauseWhileDown: DependencyHealthCheck? = null,
+    private val healthPollInterval: Duration = 5.seconds,
     private val connectionFactory: ConnectionFactory = defaultConnectionFactory(config),
 ) : DependencyHealthCheck {
     private val log = LoggerFactory.getLogger(ObservationEventConsumer::class.java)
@@ -87,6 +98,10 @@ class ObservationEventConsumer(
     @Volatile private var connected = false
 
     @Volatile private var stopping = false
+
+    @Volatile private var paused = false
+
+    private var scope: CoroutineScope? = null
 
     private val consumeLock = Any()
     private val publishLock = Any()
@@ -111,6 +126,11 @@ class ObservationEventConsumer(
 
     /** Connects (retrying in the background while the broker is unreachable) and starts the workers. */
     fun start(scope: CoroutineScope) {
+        this.scope = scope
+        Gauge
+            .builder("carevoice.amqp.consumer.paused", this) { if (it.paused) 1.0 else 0.0 }
+            .description("1 while consumption is paused because a dependency (MongoDB) is down")
+            .register(registry)
         repeat(workers) { index ->
             workerJobs +=
                 scope.launch(Dispatchers.Default) {
@@ -192,9 +212,9 @@ class ObservationEventConsumer(
         log.info("RabbitMQ consumer stopped")
     }
 
-    /** Ready only while the connection is open and the consumer is attached. */
+    /** Ready only while the connection is open and the consumer is attached (or deliberately paused). */
     override suspend fun isHealthy(): Boolean =
-        connected && consumerTag != null && connection?.isOpen == true && consumeChannel?.isOpen == true
+        connected && (consumerTag != null || paused) && connection?.isOpen == true && consumeChannel?.isOpen == true
 
     private fun connect() {
         val conn = connectionFactory.newConnection("alert-service-consumer")
@@ -227,31 +247,7 @@ class ObservationEventConsumer(
         publisher.confirmSelect()
         publishChannel = publisher
 
-        consumerTag =
-            channel.basicConsume(
-                AmqpTopology.QUEUE,
-                false,
-                DeliverCallback { _, delivery -> enqueue(delivery) },
-                CancelCallback { tag ->
-                    log.event(
-                        Level.WARN,
-                        LogType.EXTERNAL_REQUEST,
-                        "RabbitMQ consumer was cancelled by the broker",
-                        "consumerTag" to tag,
-                    )
-                },
-                ConsumerShutdownSignalCallback { tag, signal ->
-                    if (!signal.isInitiatedByApplication) {
-                        log.event(
-                            Level.WARN,
-                            LogType.EXTERNAL_REQUEST,
-                            "RabbitMQ consumer shut down",
-                            "consumerTag" to tag,
-                            "reason" to signal.message,
-                        )
-                    }
-                },
-            )
+        consumerTag = subscribe(channel)
         connected = true
         log.event(
             Level.INFO,
@@ -262,6 +258,32 @@ class ObservationEventConsumer(
             "workers" to workers,
         )
     }
+
+    private fun subscribe(channel: Channel): String =
+        channel.basicConsume(
+            AmqpTopology.QUEUE,
+            false,
+            DeliverCallback { _, delivery -> enqueue(delivery) },
+            CancelCallback { tag ->
+                log.event(
+                    Level.WARN,
+                    LogType.EXTERNAL_REQUEST,
+                    "RabbitMQ consumer was cancelled by the broker",
+                    "consumerTag" to tag,
+                )
+            },
+            ConsumerShutdownSignalCallback { tag, signal ->
+                if (!signal.isInitiatedByApplication) {
+                    log.event(
+                        Level.WARN,
+                        LogType.EXTERNAL_REQUEST,
+                        "RabbitMQ consumer shut down",
+                        "consumerTag" to tag,
+                        "reason" to signal.message,
+                    )
+                }
+            },
+        )
 
     /** Runs on the client library's thread: blocks it while the buffer is full (backpressure, never drops). */
     private fun enqueue(delivery: Delivery) {
@@ -303,6 +325,11 @@ class ObservationEventConsumer(
 
     private suspend fun process(delivery: Delivery, headers: Map<String, Any?>) {
         val tag = delivery.envelope.deliveryTag
+        if (paused) {
+            // Buffered before the pause: hand it back untouched, so it is processed once the dependency is back.
+            requeue(tag)
+            return
+        }
         log.event(
             Level.DEBUG,
             null,
@@ -337,7 +364,7 @@ class ObservationEventConsumer(
                 is AlertServiceException.InvalidEvent,
                 -> deadLetter(delivery, reason = e.javaClass.simpleName)
 
-                is AlertServiceException.DependencyUnavailable -> retryOrDeadLetter(delivery, e)
+                is AlertServiceException.DependencyUnavailable -> retryOrPause(delivery, e)
 
                 is AlertServiceException.AlertNotFound,
                 is AlertServiceException.AlreadyAcknowledged,
@@ -352,6 +379,95 @@ class ObservationEventConsumer(
         }
     }
 
+    /**
+     * A blip (the dependency answers again right away) is retried like any transient failure. A real outage pauses
+     * consumption, and the message goes back to the queue without counting an attempt.
+     */
+    private suspend fun retryOrPause(delivery: Delivery, cause: AlertServiceException.DependencyUnavailable) {
+        val health = pauseWhileDown
+        if (health == null || scope == null || isUp(health)) {
+            retryOrDeadLetter(delivery, cause)
+            return
+        }
+        pause(health, cause.dependency)
+        requeue(delivery.envelope.deliveryTag)
+    }
+
+    private suspend fun pause(health: DependencyHealthCheck, dependency: String) {
+        val tagToCancel: String?
+        synchronized(consumeLock) {
+            if (paused || stopping) return
+            paused = true
+            tagToCancel = consumerTag
+            consumerTag = null
+        }
+        withContext(Dispatchers.IO) {
+            runCatching { tagToCancel?.let { tag -> synchronized(consumeLock) { consumeChannel?.basicCancel(tag) } } }
+                .onFailure {
+                    log.event(
+                        Level.WARN,
+                        LogType.EXTERNAL_REQUEST,
+                        "Could not cancel the consumer for the pause",
+                        cause = it,
+                    )
+                }
+        }
+        log.event(
+            Level.WARN,
+            LogType.EXTERNAL_REQUEST,
+            "Consumption paused: dependency unavailable",
+            "dependency" to dependency,
+            "checkEveryMs" to healthPollInterval.inWholeMilliseconds,
+        )
+        scope?.launch(Dispatchers.IO) { resumeWhenHealthy(health) }
+    }
+
+    private suspend fun resumeWhenHealthy(health: DependencyHealthCheck) {
+        while (!stopping) {
+            delay(healthPollInterval)
+            if (!isUp(health)) continue
+            try {
+                synchronized(consumeLock) {
+                    val channel = consumeChannel?.takeIf { it.isOpen } ?: error("consume channel is not open")
+                    consumerTag = subscribe(channel)
+                    paused = false
+                }
+                log.event(Level.INFO, LogType.EXTERNAL_REQUEST, "Consumption resumed", "dependency" to health.name)
+                return
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                log.event(
+                    Level.WARN,
+                    LogType.EXTERNAL_REQUEST,
+                    "Could not resume consuming; retrying",
+                    "error" to e.javaClass.simpleName,
+                )
+            }
+        }
+    }
+
+    private suspend fun isUp(health: DependencyHealthCheck): Boolean = try {
+        health.isHealthy()
+    } catch (e: CancellationException) {
+        throw e
+    } catch (e: Exception) {
+        false
+    }
+
+    /** `nack` with requeue: back to the queue for this or another pod, without a retry attempt or dead-lettering. */
+    private suspend fun requeue(tag: Long) {
+        withContext(Dispatchers.IO) { synchronized(consumeLock) { consumeChannel?.basicNack(tag, false, true) } }
+        consumed("requeued").increment()
+        log.event(
+            Level.DEBUG,
+            null,
+            "Delivery requeued (consumer paused)",
+            "deliveryTag" to tag,
+            "decision" to "requeue",
+        )
+    }
+
     private suspend fun retryOrDeadLetter(delivery: Delivery, cause: Exception) {
         val attempt = deliveryAttempt(delivery.properties.headers.orEmpty())
         if (attempt >= MAX_DELIVERIES) {
@@ -364,29 +480,52 @@ class ObservationEventConsumer(
                 cause = cause,
             )
             deadLetter(delivery, reason = "max-deliveries-exceeded: ${cause.javaClass.simpleName}")
-        } else {
-            log.event(
-                Level.WARN,
-                null,
-                "Event failed; retrying in 5 s",
-                "attempt" to attempt,
-                "error" to cause.javaClass.simpleName,
-            )
-            withContext(Dispatchers.IO) {
-                synchronized(consumeLock) { consumeChannel?.basicNack(delivery.envelope.deliveryTag, false, false) }
-            }
-            // nack without requeue: the dead-letter route of the main queue sends it to the 5 s retry queue.
-            log.event(
-                Level.DEBUG,
-                null,
-                "Delivery nacked for retry",
-                "deliveryTag" to delivery.envelope.deliveryTag,
-                "decision" to "retry",
-                "attempt" to attempt,
-                "maxDeliveries" to MAX_DELIVERIES,
-            )
-            consumed("retried").increment()
+            return
         }
+        val tier = AmqpTopology.retryTier(attempt)
+        val delay = AmqpTopology.RETRY_DELAYS[tier]
+        log.event(
+            Level.WARN,
+            null,
+            "Event failed; retrying later",
+            "attempt" to attempt,
+            "maxDeliveries" to MAX_DELIVERIES,
+            "retryInMs" to delay.inWholeMilliseconds,
+            "error" to cause.javaClass.simpleName,
+        )
+        val decision =
+            try {
+                val headers = withoutDeathHistory(delivery.properties.headers.orEmpty()).toMutableMap()
+                headers[HEADER_ATTEMPT] = attempt + 1
+                publishConfirmed(delivery, AmqpTopology.RETRY_EXCHANGE, AmqpTopology.retryRoutingKey(tier), headers)
+                ack(delivery.envelope.deliveryTag)
+                "retry"
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                // The copy may or may not have reached the broker; a duplicate is harmless (idempotent on eventId).
+                // nack without requeue: the main queue dead-letters it to the first (5 s) tier.
+                log.event(
+                    Level.WARN,
+                    LogType.EXTERNAL_REQUEST,
+                    "Could not publish the retry; falling back to the 5 s retry queue",
+                    "error" to e.javaClass.simpleName,
+                )
+                withContext(Dispatchers.IO) {
+                    synchronized(consumeLock) { consumeChannel?.basicNack(delivery.envelope.deliveryTag, false, false) }
+                }
+                "retry-fallback"
+            }
+        log.event(
+            Level.DEBUG,
+            null,
+            "Delivery settled for retry",
+            "deliveryTag" to delivery.envelope.deliveryTag,
+            "decision" to decision,
+            "attempt" to attempt,
+            "retryQueue" to AmqpTopology.retryQueue(tier),
+        )
+        consumed("retried").increment()
     }
 
     /**
@@ -394,23 +533,10 @@ class ObservationEventConsumer(
      * confirm BEFORE acking the original, so a poison message is never lost between the two steps.
      */
     private suspend fun deadLetter(delivery: Delivery, reason: String) {
-        withContext(Dispatchers.IO) {
-            val headers = delivery.properties.headers.orEmpty().toMutableMap()
-            headers[HEADER_DEAD_LETTER_REASON] = reason
-            headers[HEADER_ORIGINAL_ROUTING_KEY] = delivery.envelope.routingKey
-            val properties = delivery.properties.builder().headers(headers).build()
-            synchronized(publishLock) {
-                val channel = publishChannel ?: error("RabbitMQ publish channel is not open")
-                channel.basicPublish(
-                    AmqpTopology.DEAD_LETTER_EXCHANGE,
-                    AmqpTopology.QUEUE_ROUTING_KEY,
-                    false,
-                    properties,
-                    delivery.body,
-                )
-                channel.waitForConfirmsOrDie(CONFIRM_TIMEOUT_MS)
-            }
-        }
+        val headers = delivery.properties.headers.orEmpty().toMutableMap()
+        headers[HEADER_DEAD_LETTER_REASON] = reason
+        headers[HEADER_ORIGINAL_ROUTING_KEY] = delivery.envelope.routingKey
+        publishConfirmed(delivery, AmqpTopology.DEAD_LETTER_EXCHANGE, AmqpTopology.QUEUE_ROUTING_KEY, headers)
         ack(delivery.envelope.deliveryTag)
         consumed("dead_lettered").increment()
         log.event(
@@ -420,6 +546,23 @@ class ObservationEventConsumer(
             "exchange" to AmqpTopology.DEAD_LETTER_EXCHANGE,
             "reason" to reason,
         )
+    }
+
+    /** Publishes the body with [headers] (other properties unchanged) and waits for the broker's confirm. */
+    private suspend fun publishConfirmed(
+        delivery: Delivery,
+        exchange: String,
+        routingKey: String,
+        headers: Map<String, Any?>,
+    ) {
+        withContext(Dispatchers.IO) {
+            val properties = delivery.properties.builder().headers(headers).build()
+            synchronized(publishLock) {
+                val channel = publishChannel ?: error("RabbitMQ publish channel is not open")
+                channel.basicPublish(exchange, routingKey, false, properties, delivery.body)
+                channel.waitForConfirmsOrDie(CONFIRM_TIMEOUT_MS)
+            }
+        }
     }
 
     private suspend fun ack(tag: Long) {
@@ -440,12 +583,16 @@ class ObservationEventConsumer(
 
     companion object {
         const val DEFAULT_WORKERS = 8
-        const val MAX_DELIVERIES = 5
+        /** One delivery plus one per retry tier: the event is dead-lettered when delivery 6 fails (after ~43 min). */
+        val MAX_DELIVERIES: Int = AmqpTopology.RETRY_DELAYS.size + 1
         const val HEADER_SCHEMA_VERSION = "schemaVersion"
         const val HEADER_REQUEST_ID = "requestId"
         const val HEADER_TRACEPARENT = "traceparent"
         const val HEADER_DEAD_LETTER_REASON = "x-carevoice-dead-letter-reason"
         const val HEADER_ORIGINAL_ROUTING_KEY = "x-carevoice-original-routing-key"
+
+        /** Number of the NEXT delivery, set by this consumer when it schedules a retry. */
+        const val HEADER_ATTEMPT = "x-carevoice-attempt"
         private const val CONFIRM_TIMEOUT_MS = 5_000L
         private const val CLOSE_TIMEOUT_MS = 5_000
         private val REQUEST_ID_PATTERN = Regex("[A-Za-z0-9._:-]{1,64}")
@@ -461,18 +608,34 @@ class ObservationEventConsumer(
         }
 
         /**
-         * Delivery number of the current delivery: 1 + how often THIS queue rejected the message, read from the
-         * `x-death` header the broker maintains when dead-lettering (`count` per queue + reason).
+         * Delivery number of the current delivery (1-based): [HEADER_ATTEMPT] (set by this consumer when it schedules a
+         * retry, 1 when absent) plus how often THIS queue rejected the message since then, read from the `x-death`
+         * header the broker maintains when dead-lettering (`count` per queue + reason). Rejections happen only on the
+         * fallback path; a scheduled retry starts a fresh `x-death` history, so nothing is counted twice.
          */
         fun deliveryAttempt(headers: Map<String, Any?>): Int {
-            val deaths = headers["x-death"] as? List<*> ?: return 1
+            val explicit = when (val value = headers[HEADER_ATTEMPT]) {
+                is Number -> value.toInt()
+                null -> null
+                else -> value.toString().toIntOrNull()
+            }?.coerceAtLeast(1) ?: 1
+            val deaths = headers["x-death"] as? List<*> ?: return explicit
             val rejected =
                 deaths
                     .filterIsInstance<Map<*, *>>()
                     .filter { it["queue"]?.toString() == AmqpTopology.QUEUE && it["reason"]?.toString() == "rejected" }
                     .sumOf { (it["count"] as? Number)?.toLong() ?: 0L }
-            return (rejected + 1).coerceAtMost(Int.MAX_VALUE.toLong()).toInt()
+            return (explicit + rejected).coerceAtMost(Int.MAX_VALUE.toLong()).toInt()
         }
+
+        /**
+         * [headers] without the broker's dead-lettering history (`x-death`, `x-first-death-*`, `x-last-death-*`), so a
+         * re-published copy starts counting afresh and [deliveryAttempt] never counts a rejection twice.
+         */
+        fun withoutDeathHistory(headers: Map<String, Any?>): Map<String, Any?> =
+            headers.filterKeys { key ->
+                key != "x-death" && !key.startsWith("x-first-death-") && !key.startsWith("x-last-death-")
+            }
 
         /** The `schemaVersion` header (Int on the wire, but tolerate a numeric string); null when absent. */
         fun headerSchemaVersion(headers: Map<String, Any?>): Int? = when (val value = headers[HEADER_SCHEMA_VERSION]) {

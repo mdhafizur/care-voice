@@ -35,6 +35,7 @@ import javax.sql.DataSource
 import kotlin.coroutines.cancellation.CancellationException
 import kotlin.random.Random
 import kotlin.time.Duration
+import kotlin.time.Duration.Companion.milliseconds
 import kotlin.time.Duration.Companion.seconds
 import kotlin.time.TimeSource
 import kotlin.time.toJavaDuration
@@ -295,7 +296,8 @@ class OutboxRelay(
 
                 is PublishResult.Retryable -> {
                     val attempts = claimed.event.attempts + 1
-                    if (attempts >= settings.maxAttempts) {
+                    val age = (now.toEpochMilli() - claimed.createdAt.toEpochMilli()).milliseconds
+                    if (attempts >= settings.maxAttempts && age >= settings.retryFor) {
                         Outcome.DEAD to
                             repository.markDead(claimed, attempts, "gave up after $attempts attempts: ${result.reason}")
                     } else {

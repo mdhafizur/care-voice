@@ -1975,8 +1975,8 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "max(rabbitmq_queue_messages{queue=\"alert-service.observations.retry\"})",
-          "legendFormat": "retry"
+          "expr": "sum(max by (queue) (rabbitmq_queue_messages{queue=~\"alert-service.observations.retry.*\"}))",
+          "legendFormat": "retry (all tiers)"
         },
         {
           "refId": "B",

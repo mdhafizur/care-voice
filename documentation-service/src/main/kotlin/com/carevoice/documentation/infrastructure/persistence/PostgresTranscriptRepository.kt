@@ -55,7 +55,7 @@ class PostgresTranscriptRepository(private val dataSource: DataSource, private v
     }
 
     override suspend fun findByIdempotencyKey(createdBy: String, idempotencyKey: UUID): TranscriptRecord? =
-        withConnection(dataSource) { connection ->
+        withReadConnection(dataSource) { connection ->
             connection.queryOne(
                 "$SELECT_SQL WHERE t.created_by = ? AND t.idempotency_key = ?",
                 listOf(createdBy, idempotencyKey),
@@ -64,7 +64,7 @@ class PostgresTranscriptRepository(private val dataSource: DataSource, private v
         }
 
     override suspend fun findById(tenantId: String, wardId: String, transcriptId: UUID): TranscriptRecord? =
-        withConnection(dataSource) { connection ->
+        withReadConnection(dataSource) { connection ->
             connection.queryOne(
                 "$SELECT_SQL WHERE t.id = ? AND t.tenant_id = ? AND r.ward_id = ?",
                 listOf(transcriptId, tenantId, wardId),

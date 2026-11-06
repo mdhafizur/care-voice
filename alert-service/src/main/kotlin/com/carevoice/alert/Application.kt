@@ -23,6 +23,7 @@ import com.carevoice.alert.config.AppConfig
 import com.carevoice.alert.config.ConfigException
 import com.carevoice.alert.domain.AlertEvaluator
 import com.carevoice.alert.domain.AlertRule
+import com.carevoice.alert.infrastructure.amqp.DeadLetterReplayer
 import com.carevoice.alert.infrastructure.amqp.ObservationEventConsumer
 import com.carevoice.alert.infrastructure.guidance.ClasspathProtocolSource
 import com.carevoice.alert.infrastructure.guidance.GuidanceHttpClient
@@ -145,16 +146,41 @@ fun main(args: Array<String>) {
             log.error(e.message)
             exitProcess(EXIT_CONFIG_ERROR)
         }
-    when (args.toList()) {
-        listOf("migrate") -> exitProcess(runMigrations(config))
+    val replayLimit = replayLimit(args.toList())
+    when {
+        args.isEmpty() -> serve(config)
 
-        emptyList<String>() -> serve(config)
+        args.toList() == listOf("migrate") -> exitProcess(runMigrations(config))
+
+        replayLimit != null -> exitProcess(replayDeadLetters(config, replayLimit))
 
         else -> {
-            log.event(Level.ERROR, null, "Unknown arguments; expected none or 'migrate'", "arguments" to args.toList())
+            log.event(
+                Level.ERROR,
+                null,
+                "Unknown arguments; expected none, 'migrate' or '$REPLAY_COMMAND [limit]'",
+                "arguments" to args.toList(),
+            )
             exitProcess(EXIT_USAGE)
         }
     }
+}
+
+/** `replay-dead-letters` → every message; `replay-dead-letters <n>` (n >= 1) → at most n; anything else → null. */
+internal fun replayLimit(args: List<String>): Int? = when {
+    args == listOf(REPLAY_COMMAND) -> Int.MAX_VALUE
+    args.size == 2 && args[0] == REPLAY_COMMAND -> args[1].toIntOrNull()?.takeIf { it >= 1 }
+    else -> null
+}
+
+/** Moves dead-lettered events back to the queue (docs/CONTRACTS.md, section 8a); exit code 0 on success. */
+private fun replayDeadLetters(config: AppConfig, limit: Int): Int = try {
+    // The replayer logs every replayed event and a summary.
+    DeadLetterReplayer(ObservationEventConsumer.defaultConnectionFactory(config.rabbitmq)).replay(limit)
+    0
+} catch (e: Exception) {
+    log.event(Level.ERROR, LogType.EXTERNAL_REQUEST, "Dead-letter replay failed", cause = e)
+    1
 }
 
 private fun runMigrations(config: AppConfig): Int {
@@ -203,7 +229,10 @@ private fun serve(config: AppConfig) {
     val guidanceWriter = GuidanceHttpClient.writer(config.guidance, guidanceHttpClient, registry)
 
     val consumerScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
-    val consumer = ObservationEventConsumer(config.rabbitmq, processObservationEvent, registry)
+    val mongoHealth = MongoHealthCheck(database)
+    // Pauses consumption while Mongo is down, so a long outage leaves the events waiting in the queue.
+    val consumer =
+        ObservationEventConsumer(config.rabbitmq, processObservationEvent, registry, pauseWhileDown = mongoHealth)
 
     val deps =
         Dependencies(
@@ -214,7 +243,7 @@ private fun serve(config: AppConfig) {
             scrapeMetrics = { registry.scrape() },
             alerts = alerts,
             processedEvents = processedEvents,
-            healthChecks = listOf(MongoHealthCheck(database), consumer),
+            healthChecks = listOf(mongoHealth, consumer),
             clock = clock,
             processObservationEvent = processObservationEvent,
             embedder = embedder,
@@ -273,6 +302,7 @@ private suspend fun ingestProtocols(embedder: Embedder, repository: ProtocolChun
 
 private const val EXIT_CONFIG_ERROR = 2
 private const val EXIT_USAGE = 64
+private const val REPLAY_COMMAND = "replay-dead-letters"
 private val READINESS_PROPAGATION_DELAY = 5.seconds
 private val CONSUMER_STOP_TIMEOUT = 10.seconds
 private val GRACE_PERIOD = 1.seconds

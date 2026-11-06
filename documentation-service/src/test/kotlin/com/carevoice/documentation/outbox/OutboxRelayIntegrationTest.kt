@@ -177,9 +177,10 @@ class OutboxRelayIntegrationTest {
         }
 
         @Test
-        fun `should mark the row DEAD after the last allowed attempt`() {
+        fun `should mark the row DEAD after the last allowed attempt once it retried for long enough`() {
             val event = insertEvents(1).single()
             OutboxDatabase.setAttempts(event.id, SETTINGS.maxAttempts - 1)
+            clock.advance(SETTINGS.retryFor)
             startRelay { PublishResult.Retryable("HTTP 502") }
 
             awaitUntil("the row is DEAD") { OutboxDatabase.row(event.id).status == "DEAD" }
@@ -187,6 +188,20 @@ class OutboxRelayIntegrationTest {
             val row = OutboxDatabase.row(event.id)
             assertThat(row.attempts).isEqualTo(SETTINGS.maxAttempts)
             assertThat(row.lastError).isEqualTo("gave up after ${SETTINGS.maxAttempts} attempts: HTTP 502")
+        }
+
+        @Test
+        fun `should keep retrying a young row although its attempts are used up`() {
+            val event = insertEvents(1).single()
+            OutboxDatabase.setAttempts(event.id, SETTINGS.maxAttempts - 1)
+            clock.advance(SETTINGS.retryFor - 1.seconds)
+            startRelay { PublishResult.Retryable("HTTP 502") }
+
+            awaitUntil("the attempt is recorded") { OutboxDatabase.row(event.id).attempts == SETTINGS.maxAttempts }
+
+            val row = OutboxDatabase.row(event.id)
+            assertThat(row.status).isEqualTo("PENDING")
+            assertThat(row.nextAttemptAt).isAfter(now)
         }
 
         @Test

@@ -16,7 +16,7 @@ TEST_FILTER := $(if $(TEST),--tests '$(TEST)',)
 .PHONY: help build assemble install test test-embedded test-containers test-arch test-fault check \
         format lint coverage coverage-verify pitest pact sbom run-documentation run-alert \
         load-smoke load load-stress deps refresh clean \
-        up up-fast images-fast down logs ps migrate db-shell mongo-shell redis-cli rabbitmq-ui grafana monitoring-up admin-up tools-up observability-reset \
+        up up-fast images-fast down logs ps migrate dlq-replay db-shell mongo-shell redis-cli rabbitmq-ui grafana monitoring-up admin-up tools-up observability-reset \
         security-scan db-bench demo demo-check reset-demo k8s-up k8s-down k8s-status k8s-cache-clean
 
 help: ## List all targets
@@ -140,6 +140,9 @@ ps: ## Show the stack's containers and their health
 
 migrate: ## Run both one-shot migration containers (Flyway + Mongo) and exit
 	$(COMPOSE) up --build --no-log-prefix documentation-migrate alert-migrate
+
+dlq-replay: ## Move dead-lettered events back to alert-service's queue (LIMIT=n for at most n; needs the stack up)
+	$(COMPOSE) run --rm --no-deps alert-migrate replay-dead-letters $(LIMIT)
 
 db-shell: ## psql into the documentation-service database
 	$(COMPOSE) exec postgres sh -c 'psql -U "$$POSTGRES_USER" -d "$$POSTGRES_DB"'

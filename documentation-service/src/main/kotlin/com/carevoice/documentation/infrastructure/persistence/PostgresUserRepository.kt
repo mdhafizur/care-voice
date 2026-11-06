@@ -7,7 +7,7 @@ import javax.sql.DataSource
 
 /** Repository pattern: login accounts. */
 class PostgresUserRepository(private val dataSource: DataSource) : UserRepository {
-    override suspend fun findByUsername(username: String): UserAccount? = withConnection(dataSource) { connection ->
+    override suspend fun findByUsername(username: String): UserAccount? = withReadConnection(dataSource) { connection ->
         connection.queryOne(
             "SELECT username, tenant_id, ward_id, role, password_hash FROM users WHERE username = ?",
             listOf(username),

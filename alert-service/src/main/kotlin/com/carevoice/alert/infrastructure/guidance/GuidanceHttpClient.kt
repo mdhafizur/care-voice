@@ -11,8 +11,10 @@ import io.micrometer.core.instrument.MeterRegistry
 /**
  * Factory pattern: the HTTP client, the embedder and the LLM writer for the guidance providers (Voyage, Claude,
  * Gemini). One shared client per process (its connection pool is reused); per-request timeouts are set by each
- * adapter, so HttpTimeout must be installed. Every remote provider is wrapped in an instrumenting decorator
- * ([InstrumentedEmbedder], [InstrumentedGuidanceWriter]): one log line and one timer sample per call.
+ * adapter, so HttpTimeout must be installed. Every remote provider is wrapped in two decorators: a circuit breaker
+ * ([CircuitBreakingEmbedder], [CircuitBreakingGuidanceWriter]) outside an instrumenting one ([InstrumentedEmbedder],
+ * [InstrumentedGuidanceWriter]: one log line and one timer sample per real call). The breaker is outside, so a call
+ * it skips is not timed as a provider call.
  */
 object GuidanceHttpClient {
     fun create(): HttpClient = HttpClient(CIO) {
@@ -29,19 +31,28 @@ object GuidanceHttpClient {
             GuidanceConfig.EmbedderKind.HASHING -> HashingEmbedder()
 
             GuidanceConfig.EmbedderKind.VOYAGE ->
-                InstrumentedEmbedder(
-                    VoyageEmbedder(config.voyageApiKey!!, httpClient, config.voyageModel),
-                    "voyage",
+                guarded(
+                    InstrumentedEmbedder(
+                        VoyageEmbedder(config.voyageApiKey!!, httpClient, config.voyageModel),
+                        "voyage",
+                        registry,
+                    ),
                     registry,
                 )
 
             GuidanceConfig.EmbedderKind.GEMINI ->
-                InstrumentedEmbedder(
-                    GeminiEmbedder(config.geminiApiKey!!, httpClient, apiModel = config.geminiEmbeddingModel),
-                    "gemini",
+                guarded(
+                    InstrumentedEmbedder(
+                        GeminiEmbedder(config.geminiApiKey!!, httpClient, apiModel = config.geminiEmbeddingModel),
+                        "gemini",
+                        registry,
+                    ),
                     registry,
                 )
         }
+
+    private fun guarded(embedder: Embedder, registry: MeterRegistry): Embedder =
+        CircuitBreakingEmbedder(embedder, GuidanceCircuitBreakers.create(GuidanceCircuitBreakers.EMBEDDER, registry))
 
     /** The LLM guidance writer selected by `AI_PROVIDER`, or null when `GUIDANCE_AI_ENABLED` is false. */
     fun writer(config: GuidanceConfig, httpClient: HttpClient, registry: MeterRegistry): GuidanceWriter? {
@@ -61,6 +72,9 @@ object GuidanceHttpClient {
                         httpClient,
                     )
             }
-        return InstrumentedGuidanceWriter(writer, registry)
+        return CircuitBreakingGuidanceWriter(
+            InstrumentedGuidanceWriter(writer, registry),
+            GuidanceCircuitBreakers.create(GuidanceCircuitBreakers.WRITER, registry),
+        )
     }
 }

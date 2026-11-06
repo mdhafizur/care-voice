@@ -9,7 +9,7 @@ import javax.sql.DataSource
 class PostgresResidentRepository(private val dataSource: DataSource, private val encryptor: FieldEncryptor) :
     ResidentRepository {
     override suspend fun findById(tenantId: String, residentId: String): Resident? =
-        withConnection(dataSource) { connection ->
+        withReadConnection(dataSource) { connection ->
             connection.queryOne(
                 "SELECT id, tenant_id, ward_id, display_name_enc FROM residents WHERE tenant_id = ? AND id = ?",
                 listOf(tenantId, residentId),

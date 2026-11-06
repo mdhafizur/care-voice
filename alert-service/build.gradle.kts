@@ -24,6 +24,9 @@ dependencies {
     implementation(libs.micrometer.prometheus)
     // Guidance providers (Voyage embeddings, Claude); used only by infrastructure/guidance adapters.
     implementation(libs.bundles.ktor.client)
+    // Circuit breakers around the guidance providers (infrastructure/guidance only).
+    implementation(libs.resilience4j.circuitbreaker)
+    implementation(libs.resilience4j.micrometer)
 
     testImplementation(project(":test-support"))
     testImplementation(libs.ktor.server.test.host)
