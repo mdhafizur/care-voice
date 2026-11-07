@@ -38,7 +38,7 @@ class RequestDeadlineTest {
     }
 
     @Test
-    fun `a request that finishes in time is untouched`() = withDeadlineApp {
+    fun `should leave a request that finishes in time untouched`() = withDeadlineApp {
         val response = client.get("/fast")
 
         assertThat(response.status).isEqualTo(HttpStatusCode.OK)
@@ -46,7 +46,7 @@ class RequestDeadlineTest {
     }
 
     @Test
-    fun `a request past the deadline is cancelled and answered with 503 and Retry-After`() = withDeadlineApp {
+    fun `should cancel a request past the deadline and answer 503 with Retry-After`() = withDeadlineApp {
         val response = client.get("/slow")
 
         assertThat(response.status).isEqualTo(HttpStatusCode.ServiceUnavailable)
@@ -56,7 +56,7 @@ class RequestDeadlineTest {
     }
 
     @Test
-    fun `an exempt path is not bounded`() = withDeadlineApp {
+    fun `should not bound an exempt path`() = withDeadlineApp {
         val response = client.get("/exempt")
 
         assertThat(response.status).isEqualTo(HttpStatusCode.OK)

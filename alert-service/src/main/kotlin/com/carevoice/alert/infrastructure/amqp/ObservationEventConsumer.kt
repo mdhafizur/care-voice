@@ -259,31 +259,30 @@ class ObservationEventConsumer(
         )
     }
 
-    private fun subscribe(channel: Channel): String =
-        channel.basicConsume(
-            AmqpTopology.QUEUE,
-            false,
-            DeliverCallback { _, delivery -> enqueue(delivery) },
-            CancelCallback { tag ->
+    private fun subscribe(channel: Channel): String = channel.basicConsume(
+        AmqpTopology.QUEUE,
+        false,
+        DeliverCallback { _, delivery -> enqueue(delivery) },
+        CancelCallback { tag ->
+            log.event(
+                Level.WARN,
+                LogType.EXTERNAL_REQUEST,
+                "RabbitMQ consumer was cancelled by the broker",
+                "consumerTag" to tag,
+            )
+        },
+        ConsumerShutdownSignalCallback { tag, signal ->
+            if (!signal.isInitiatedByApplication) {
                 log.event(
                     Level.WARN,
                     LogType.EXTERNAL_REQUEST,
-                    "RabbitMQ consumer was cancelled by the broker",
+                    "RabbitMQ consumer shut down",
                     "consumerTag" to tag,
+                    "reason" to signal.message,
                 )
-            },
-            ConsumerShutdownSignalCallback { tag, signal ->
-                if (!signal.isInitiatedByApplication) {
-                    log.event(
-                        Level.WARN,
-                        LogType.EXTERNAL_REQUEST,
-                        "RabbitMQ consumer shut down",
-                        "consumerTag" to tag,
-                        "reason" to signal.message,
-                    )
-                }
-            },
-        )
+            }
+        },
+    )
 
     /** Runs on the client library's thread: blocks it while the buffer is full (backpressure, never drops). */
     private fun enqueue(delivery: Delivery) {
@@ -583,6 +582,7 @@ class ObservationEventConsumer(
 
     companion object {
         const val DEFAULT_WORKERS = 8
+
         /** One delivery plus one per retry tier: the event is dead-lettered when delivery 6 fails (after ~43 min). */
         val MAX_DELIVERIES: Int = AmqpTopology.RETRY_DELAYS.size + 1
         const val HEADER_SCHEMA_VERSION = "schemaVersion"
@@ -632,10 +632,9 @@ class ObservationEventConsumer(
          * [headers] without the broker's dead-lettering history (`x-death`, `x-first-death-*`, `x-last-death-*`), so a
          * re-published copy starts counting afresh and [deliveryAttempt] never counts a rejection twice.
          */
-        fun withoutDeathHistory(headers: Map<String, Any?>): Map<String, Any?> =
-            headers.filterKeys { key ->
-                key != "x-death" && !key.startsWith("x-first-death-") && !key.startsWith("x-last-death-")
-            }
+        fun withoutDeathHistory(headers: Map<String, Any?>): Map<String, Any?> = headers.filterKeys { key ->
+            key != "x-death" && !key.startsWith("x-first-death-") && !key.startsWith("x-last-death-")
+        }
 
         /** The `schemaVersion` header (Int on the wire, but tolerate a numeric string); null when absent. */
         fun headerSchemaVersion(headers: Map<String, Any?>): Int? = when (val value = headers[HEADER_SCHEMA_VERSION]) {
