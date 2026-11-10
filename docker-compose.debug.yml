@@ -6,6 +6,9 @@
 #   on localhost: an open debug port lets anyone run code in the JVM.
 # - JDK_JAVA_OPTIONS is read by the `java` launcher and added to the image's JAVA_TOOL_OPTIONS (OpenTelemetry agent,
 #   memory flags), so nothing from the Dockerfile is lost. suspend=n: the service starts without waiting for a debugger.
+# - Coroutine debug mode (-Dkotlinx.coroutines.debug=on): thread names in logs, thread dumps and IntelliJ also carry
+#   the coroutine's name and id, e.g. "DefaultDispatcher-worker-3 @outbox-publisher-2#17", so you see which job or
+#   request wrote a line. Debug only: it costs a little performance and keeps extra state per coroutine.
 # - REQUEST_TIMEOUT_MS at its maximum (120 s): the request deadline would otherwise cancel a request after 30 s while
 #   you are still stepping through it.
 # IntelliJ: run configurations "Debug documentation-service (Docker)" / "Debug alert-service (Docker)" in .run/.
@@ -16,7 +19,7 @@ services:
     deploy:
       replicas: 1
     environment:
-      JDK_JAVA_OPTIONS: "-agentlib:jdwp=transport=dt_socket,server=y,suspend=n,address=*:5005"
+      JDK_JAVA_OPTIONS: "-agentlib:jdwp=transport=dt_socket,server=y,suspend=n,address=*:5005 -Dkotlinx.coroutines.debug=on"
       REQUEST_TIMEOUT_MS: "120000"
     ports:
       - "127.0.0.1:5005:5005"
@@ -25,7 +28,7 @@ services:
     deploy:
       replicas: 1
     environment:
-      JDK_JAVA_OPTIONS: "-agentlib:jdwp=transport=dt_socket,server=y,suspend=n,address=*:5005"
+      JDK_JAVA_OPTIONS: "-agentlib:jdwp=transport=dt_socket,server=y,suspend=n,address=*:5005 -Dkotlinx.coroutines.debug=on"
       REQUEST_TIMEOUT_MS: "120000"
     ports:
       - "127.0.0.1:5006:5005"

@@ -155,6 +155,11 @@ ENV JAVA_TOOL_OPTIONS="-javaagent:/opt/otel/opentelemetry-javaagent.jar -XX:MaxR
 #                                      also copy the structured fields of each log line (SLF4J key-value pairs:
 #                                      result, durationMs, dependency, ...) so they are filterable in Loki, not only
 #                                      on stdout: {service_name="alert-service"} | result="error"
+#   OTEL_INSTRUMENTATION_LOGBACK_APPENDER_EXPERIMENTAL_LOG_ATTRIBUTES
+#                                      add thread.name and thread.id to every log record, like the `thread` field on
+#                                      stdout. Shown as `thread` in Grafana (otelcol-config.yaml renames it). With
+#                                      coroutines a request can hop threads, so requestId/traceId identify a request;
+#                                      the thread helps with background jobs and pool warnings (Hikari housekeeper)
 #   OTEL_METRIC_EXPORT_INTERVAL        push metrics every 15 s (agent default 60 s), matching Prometheus' 15 s scrape
 #                                      interval; with 60 s, rate() over Grafana's ~1 min $__rate_interval often has a
 #                                      single sample and dashboards show "No data"
@@ -169,6 +174,7 @@ ENV OTEL_SERVICE_NAME=documentation-service \
     OTEL_EXPORTER_OTLP_PROTOCOL=http/protobuf \
     OTEL_INSTRUMENTATION_LOGBACK_APPENDER_EXPERIMENTAL_CAPTURE_MDC_ATTRIBUTES=* \
     OTEL_INSTRUMENTATION_LOGBACK_APPENDER_EXPERIMENTAL_CAPTURE_KEY_VALUE_PAIR_ATTRIBUTES=true \
+    OTEL_INSTRUMENTATION_LOGBACK_APPENDER_EXPERIMENTAL_LOG_ATTRIBUTES=true \
     OTEL_METRIC_EXPORT_INTERVAL=15000 \
     OTEL_METRICS_EXEMPLAR_FILTER=trace_based \
     OTEL_INSTRUMENTATION_COMMON_LOGGING_TRACE_ID=traceId \

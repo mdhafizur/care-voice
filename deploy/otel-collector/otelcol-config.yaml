@@ -49,6 +49,11 @@ processors:
         statements:
           # Build the object in the per-record cache: the structured fields first, then the standard ones.
           - set(cache["record"], attributes)
+          # The agent's thread.name is called `thread` on stdout (logback.xml): same name here. thread.id stays a Loki
+          # attribute only, so the body is not cluttered.
+          - set(cache["record"]["thread"], attributes["thread.name"]) where attributes["thread.name"] != nil
+          - delete_key(cache["record"], "thread.name")
+          - delete_key(cache["record"], "thread.id")
           - set(cache["record"]["message"], body)
           - set(cache["record"]["level"], severity_text)
           - set(cache["record"]["logger"], instrumentation_scope.name)
