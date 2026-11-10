@@ -1,8 +1,8 @@
 package com.carevoice.domain.application
 
-import com.carevoice.domain.common.Either
-import com.carevoice.domain.common.left
-import com.carevoice.domain.common.right
+import arrow.core.Either
+import arrow.core.raise.either
+import arrow.core.raise.ensure
 import com.carevoice.domain.extraction.AiVitalExtractor
 import com.carevoice.domain.extraction.CompositeExtractor
 import com.carevoice.domain.extraction.ExtractedVital
@@ -53,9 +53,12 @@ class TranscriptProcessor(
     private val clock: Clock = Clock.systemUTC(),
     private val newId: () -> ObservationId = ObservationId::random,
 ) {
-    suspend fun process(residentId: ResidentId, transcript: String): Either<ValidationError, ProcessingResult> {
-        if (transcript.isBlank()) return BlankInput("transcript").left()
-        if (transcript.length > MAX_TRANSCRIPT_LENGTH) return TooLong("transcript", MAX_TRANSCRIPT_LENGTH).left()
+    suspend fun process(
+        residentId: ResidentId,
+        transcript: String,
+    ): Either<ValidationError, ProcessingResult> = either {
+        ensure(transcript.isNotBlank()) { BlankInput("transcript") }
+        ensure(transcript.length <= MAX_TRANSCRIPT_LENGTH) { TooLong("transcript", MAX_TRANSCRIPT_LENGTH) }
 
         val normalized = TranscriptNormalizer.normalize(transcript)
         val ruleOutcomes = rules.extract(normalized)
@@ -80,7 +83,7 @@ class TranscriptProcessor(
                     status = ReviewPolicy.statusFor(vital),
                 )
             }
-        return ProcessingResult(observations, rejected, usedAiFallback = ai != null).right()
+        ProcessingResult(observations, rejected, usedAiFallback = ai != null)
     }
 
     companion object {

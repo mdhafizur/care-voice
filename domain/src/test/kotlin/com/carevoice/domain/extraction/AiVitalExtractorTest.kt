@@ -1,8 +1,8 @@
 package com.carevoice.domain.extraction
 
+import arrow.core.left
+import arrow.core.right
 import com.carevoice.domain.assertRight
-import com.carevoice.domain.common.left
-import com.carevoice.domain.common.right
 import com.carevoice.domain.model.Confidence
 import com.carevoice.domain.model.ExtractionSource
 import com.carevoice.domain.model.InconsistentValues

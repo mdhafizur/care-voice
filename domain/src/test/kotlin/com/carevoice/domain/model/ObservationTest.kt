@@ -1,7 +1,7 @@
 package com.carevoice.domain.model
 
+import arrow.core.left
 import com.carevoice.domain.assertRight
-import com.carevoice.domain.common.left
 import org.assertj.core.api.Assertions.assertThat
 import org.assertj.core.api.Assertions.assertThatIllegalArgumentException
 import org.junit.jupiter.api.DisplayName

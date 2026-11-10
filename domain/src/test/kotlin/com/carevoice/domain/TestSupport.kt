@@ -1,6 +1,6 @@
 package com.carevoice.domain
 
-import com.carevoice.domain.common.Either
+import arrow.core.Either
 import org.assertj.core.api.Assertions.fail
 
 /**

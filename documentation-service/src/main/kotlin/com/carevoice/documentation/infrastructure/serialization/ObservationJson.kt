@@ -1,9 +1,9 @@
 package com.carevoice.documentation.infrastructure.serialization
 
+import arrow.core.Either
 import com.carevoice.documentation.application.ObservationRecord
 import com.carevoice.documentation.application.RejectedValue
 import com.carevoice.documentation.application.TranscriptResult
-import com.carevoice.domain.common.Either
 import com.carevoice.domain.model.BloodPressure
 import com.carevoice.domain.model.BodyTemperature
 import com.carevoice.domain.model.Confidence

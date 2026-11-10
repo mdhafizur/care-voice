@@ -7,6 +7,10 @@ import org.junit.jupiter.params.provider.Arguments.arguments
 // here, so adding a technology means adding one line instead of another test.
 
 object ArchitectureValues {
+    /** Everything the domain's production code may import: itself, Kotlin, Arrow's core library, time and UUID. */
+    val domainAllowedImports: List<String> =
+        listOf("com.carevoice.domain", "kotlin", "arrow.core", "java.time", "java.util.UUID")
+
     /** Frameworks and drivers the domain must never see (CONTRACTS section 2): it is pure Kotlin. */
     @JvmField
     val frameworkPackages: List<String> =

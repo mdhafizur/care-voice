@@ -46,7 +46,7 @@ It is a deliberately compact demo of how I structure Kotlin backend code: small 
 | Concept | Where |
 |---|---|
 | Value classes, smart constructors, "make invalid states unrepresentable" | `domain/.../model/VitalSign.kt` |
-| Typed errors instead of exceptions (`Either`, sealed `DomainError`) | `domain/.../common/Either.kt`, `model/DomainError.kt` |
+| Typed errors instead of exceptions (Arrow's `Either` and `either { ensure() }`, sealed `DomainError`) | `domain/.../model/VitalSign.kt`, `model/DomainError.kt`, ADR-0027 |
 | Strategy + Composite pattern | `domain/.../extraction/RuleExtractors.kt`, `alert/domain/AlertRules.kt` |
 | Chain of responsibility (rules first, AI fallback) | `domain/.../application/TranscriptProcessor.kt` |
 | Transformation (spoken forms → canonical, °F → °C) | `TranscriptNormalizer.kt`, `TemperatureExtractor` |
@@ -134,12 +134,14 @@ Logins, database connections and more: [docs/local-access.md](docs/local-access.
 
 The full set, with alternatives and trade-offs, is in [docs/adr/](docs/adr/README.md). The short version:
 
-- **The domain has no dependencies.** It compiles without Ktor, a database or a coroutine library (`suspend` is a
-  language feature). Frameworks are details that can be swapped.
+- **The domain has one dependency: Arrow's core library.** It compiles without Ktor, a database or a coroutine library
+  (`suspend` is a language feature). Frameworks are details that can be swapped, and an allow-list in the architecture
+  test keeps anything else out of the domain.
 - **`Either` instead of exceptions for validation.** Invalid input is expected, not exceptional. Exceptions
   (`require`) are only for programming errors, such as a confidence outside 0..1.
-- **A hand-written `Either` instead of Arrow.** It keeps the domain free of dependencies and is small enough to
-  explain. In a larger codebase I would use Arrow.
+- **Arrow's `Either` with the `either { }` builder.** Each validation rule is one `ensure(...)` line, and multi-step
+  checks read top to bottom with `bind()` instead of nested `flatMap`s (ADR-0027). The first error wins; nothing is
+  accumulated, because the first problem is enough to correct a vital sign.
 - **Rules before AI.** Regex rules are fast, free, predictable and explainable. The LLM is only a fallback, and a
   nurse must confirm anything it produces: a wrong value in a care record is worse than a missing one.
 - **Retrieval before generation, citations before trust.** Alert guidance comes from the facility's protocols. An

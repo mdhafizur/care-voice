@@ -1,6 +1,6 @@
 package com.carevoice.domain.extraction
 
-import com.carevoice.domain.common.Either
+import arrow.core.Either
 import com.carevoice.domain.model.BodyTemperature
 import com.carevoice.domain.model.ValidationError
 

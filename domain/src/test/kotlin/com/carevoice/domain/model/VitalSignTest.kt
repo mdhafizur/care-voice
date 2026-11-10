@@ -1,10 +1,10 @@
 package com.carevoice.domain.model
 
+import arrow.core.Either
+import arrow.core.left
 import com.carevoice.domain.BloodPressureValues.PLAUSIBLE_DIASTOLIC
 import com.carevoice.domain.BloodPressureValues.PLAUSIBLE_SYSTOLIC
 import com.carevoice.domain.assertRight
-import com.carevoice.domain.common.Either
-import com.carevoice.domain.common.left
 import org.assertj.core.api.Assertions.assertThat
 import org.junit.jupiter.api.DisplayName
 import org.junit.jupiter.api.Nested

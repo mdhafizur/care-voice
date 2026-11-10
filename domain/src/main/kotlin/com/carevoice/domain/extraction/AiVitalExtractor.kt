@@ -1,10 +1,12 @@
 package com.carevoice.domain.extraction
 
-import com.carevoice.domain.common.Either
-import com.carevoice.domain.common.flatMap
-import com.carevoice.domain.common.fold
-import com.carevoice.domain.common.left
-import com.carevoice.domain.common.right
+import arrow.core.Either
+import arrow.core.flatMap
+import arrow.core.left
+import arrow.core.raise.either
+import arrow.core.raise.ensure
+import arrow.core.raise.ensureNotNull
+import arrow.core.right
 import com.carevoice.domain.model.BloodPressure
 import com.carevoice.domain.model.Confidence
 import com.carevoice.domain.model.ExtractionSource
@@ -67,17 +69,18 @@ internal fun RawVitalCandidate.validate(): ExtractionOutcome {
         }
     val description = describe()
     return validated.fold(
-        onLeft = { RejectedCandidate(description, it).left() },
-        onRight = { ExtractedVital(it, Confidence(AI_CONFIDENCE), ExtractionSource.AI, description).right() },
+        ifLeft = { RejectedCandidate(description, it).left() },
+        ifRight = { ExtractedVital(it, Confidence(AI_CONFIDENCE), ExtractionSource.AI, description).right() },
     )
 }
 
-private fun RawVitalCandidate.validateBloodPressure(): Either<ValidationError, VitalSign> {
+private fun RawVitalCandidate.validateBloodPressure(): Either<ValidationError, VitalSign> = either {
     val diastolic =
-        secondaryValue ?: return InconsistentValues("blood pressure needs a systolic and a diastolic value").left()
-    return wholeNumber("systolic", value).flatMap { systolic ->
-        wholeNumber("diastolic", diastolic).flatMap { BloodPressure.of(systolic, it) }
-    }
+        ensureNotNull(secondaryValue) { InconsistentValues("blood pressure needs a systolic and a diastolic value") }
+    // bind(): the value of a Right, or stop the whole block with the Left (first error wins).
+    val systolicMmHg = wholeNumber("systolic", value).bind()
+    val diastolicMmHg = wholeNumber("diastolic", diastolic).bind()
+    BloodPressure.of(systolicMmHg, diastolicMmHg).bind()
 }
 
 /**
@@ -85,14 +88,14 @@ private fun RawVitalCandidate.validateBloodPressure(): Either<ValidationError, V
  * without changing the value: fractions, NaN, infinities and magnitudes beyond Int (which Kotlin's
  * toInt() would silently clamp to Int.MAX_VALUE, so the error would report a number nobody said).
  */
-private fun wholeNumber(fieldName: String, raw: Double): Either<ValidationError, Int> = when {
-    !raw.isFinite() || raw != Math.rint(raw) ->
-        InconsistentValues("$fieldName must be a whole number, was $raw").left()
-
-    raw !in Int.MIN_VALUE.toDouble()..Int.MAX_VALUE.toDouble() ->
-        InconsistentValues("$fieldName=${raw.display()} is far outside any plausible value").left()
-
-    else -> raw.toInt().right()
+private fun wholeNumber(fieldName: String, raw: Double): Either<ValidationError, Int> = either {
+    ensure(raw.isFinite() && raw == Math.rint(raw)) {
+        InconsistentValues("$fieldName must be a whole number, was $raw")
+    }
+    ensure(raw in Int.MIN_VALUE.toDouble()..Int.MAX_VALUE.toDouble()) {
+        InconsistentValues("$fieldName=${raw.display()} is far outside any plausible value")
+    }
+    raw.toInt()
 }
 
 /**

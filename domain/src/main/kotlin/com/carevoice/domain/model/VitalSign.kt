@@ -1,8 +1,8 @@
 package com.carevoice.domain.model
 
-import com.carevoice.domain.common.Either
-import com.carevoice.domain.common.left
-import com.carevoice.domain.common.right
+import arrow.core.Either
+import arrow.core.raise.either
+import arrow.core.raise.ensure
 import kotlin.math.floor
 
 /**
@@ -11,6 +11,9 @@ import kotlin.math.floor
  * Design: every type has a private constructor and a validating factory ("smart constructor").
  * The only way to obtain an instance is through validation, so an invalid vital sign cannot
  * exist anywhere in the system: not in the API layer, not in the database mapper, not in tests.
+ *
+ * The factories use Arrow's `either { }` builder: each `ensure(condition) { error }` is one rule, checked in order,
+ * and the first rule that fails becomes the `Left`. Invalid input is an expected result, not an exception.
  */
 sealed interface VitalSign {
     val type: VitalType
@@ -34,17 +37,17 @@ data class BloodPressure private constructor(val systolic: Int, val diastolic: I
         val SYSTOLIC_RANGE = 50..260
         val DIASTOLIC_RANGE = 30..160
 
-        fun of(systolic: Int, diastolic: Int): Either<ValidationError, BloodPressure> = when {
-            systolic !in SYSTOLIC_RANGE ->
-                OutOfRange("systolic", systolic, SYSTOLIC_RANGE.first, SYSTOLIC_RANGE.last).left()
-
-            diastolic !in DIASTOLIC_RANGE ->
-                OutOfRange("diastolic", diastolic, DIASTOLIC_RANGE.first, DIASTOLIC_RANGE.last).left()
-
-            diastolic >= systolic ->
-                InconsistentValues("diastolic ($diastolic) must be lower than systolic ($systolic)").left()
-
-            else -> BloodPressure(systolic, diastolic).right()
+        fun of(systolic: Int, diastolic: Int): Either<ValidationError, BloodPressure> = either {
+            ensure(systolic in SYSTOLIC_RANGE) {
+                OutOfRange("systolic", systolic, SYSTOLIC_RANGE.first, SYSTOLIC_RANGE.last)
+            }
+            ensure(diastolic in DIASTOLIC_RANGE) {
+                OutOfRange("diastolic", diastolic, DIASTOLIC_RANGE.first, DIASTOLIC_RANGE.last)
+            }
+            ensure(diastolic < systolic) {
+                InconsistentValues("diastolic ($diastolic) must be lower than systolic ($systolic)")
+            }
+            BloodPressure(systolic, diastolic)
         }
     }
 }
@@ -65,8 +68,10 @@ value class Pulse private constructor(val bpm: Int) : VitalSign {
     companion object {
         val RANGE = 20..250
 
-        fun of(bpm: Int): Either<ValidationError, Pulse> =
-            if (bpm in RANGE) Pulse(bpm).right() else OutOfRange("pulse", bpm, RANGE.first, RANGE.last).left()
+        fun of(bpm: Int): Either<ValidationError, Pulse> = either {
+            ensure(bpm in RANGE) { OutOfRange("pulse", bpm, RANGE.first, RANGE.last) }
+            Pulse(bpm)
+        }
     }
 }
 
@@ -84,20 +89,17 @@ value class BodyTemperature private constructor(val celsius: Double) : VitalSign
          * Rounds to one decimal (what a thermometer shows) BEFORE the range check, so the stored value and
          * the checked value are the same number: 29.96 is stored as 30.0, and 30.0 is in range.
          */
-        fun ofCelsius(celsius: Double): Either<ValidationError, BodyTemperature> {
+        fun ofCelsius(celsius: Double): Either<ValidationError, BodyTemperature> = either {
             // NaN or infinity can only come from a broken upstream (e.g. model output). It must be a validation
             // error like any other bad value, and NaN would otherwise slip through every range comparison.
-            if (!celsius.isFinite()) {
-                return InconsistentValues("temperature must be a finite number, was $celsius").left()
-            }
+            ensure(celsius.isFinite()) { InconsistentValues("temperature must be a finite number, was $celsius") }
             // floor(x + 0.5) rounds half up like roundToInt(), but without clamping to Int: 1e10 must be reported
             // as 1e10, not as the 214748364.7 a clamped Int would make of it.
             val rounded = floor(celsius * 10 + 0.5) / 10.0
-            return if (rounded in RANGE_CELSIUS) {
-                BodyTemperature(rounded).right()
-            } else {
-                OutOfRange("temperature", rounded, RANGE_CELSIUS.start, RANGE_CELSIUS.endInclusive).left()
+            ensure(rounded in RANGE_CELSIUS) {
+                OutOfRange("temperature", rounded, RANGE_CELSIUS.start, RANGE_CELSIUS.endInclusive)
             }
+            BodyTemperature(rounded)
         }
 
         /** The range error reports the converted Celsius value: the domain has one unit, so its messages do too. */

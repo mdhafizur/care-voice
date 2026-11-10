@@ -1,8 +1,8 @@
 package com.carevoice.domain.application
 
+import arrow.core.left
+import arrow.core.right
 import com.carevoice.domain.assertRight
-import com.carevoice.domain.common.left
-import com.carevoice.domain.common.right
 import com.carevoice.domain.extraction.AiVitalExtractor
 import com.carevoice.domain.extraction.RawVitalCandidate
 import com.carevoice.domain.extraction.RejectedCandidate

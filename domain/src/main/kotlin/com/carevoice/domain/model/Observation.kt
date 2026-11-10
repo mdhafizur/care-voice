@@ -1,8 +1,8 @@
 package com.carevoice.domain.model
 
-import com.carevoice.domain.common.Either
-import com.carevoice.domain.common.left
-import com.carevoice.domain.common.right
+import arrow.core.Either
+import arrow.core.raise.either
+import arrow.core.raise.ensure
 import java.time.Instant
 import java.util.UUID
 
@@ -13,10 +13,10 @@ value class ResidentId private constructor(val value: String) {
     companion object {
         private val FORMAT = Regex("^[A-Za-z0-9-]{1,64}$")
 
-        fun of(raw: String): Either<ValidationError, ResidentId> = when {
-            raw.isBlank() -> BlankInput("residentId").left()
-            !FORMAT.matches(raw) -> InconsistentValues("residentId must be 1-64 letters, digits or '-'").left()
-            else -> ResidentId(raw).right()
+        fun of(raw: String): Either<ValidationError, ResidentId> = either {
+            ensure(raw.isNotBlank()) { BlankInput("residentId") }
+            ensure(FORMAT.matches(raw)) { InconsistentValues("residentId must be 1-64 letters, digits or '-'") }
+            ResidentId(raw)
         }
     }
 }

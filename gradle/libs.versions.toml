@@ -17,6 +17,7 @@ mongodb = "5.5.1"
 caffeine = "3.2.2"
 bcrypt = "0.10.2"
 micrometer = "1.15.2"
+arrow = "2.3.0"
 resilience4j = "2.4.0"            # seen
 junit = "5.13.4"
 assertj = "3.27.3"
@@ -45,6 +46,7 @@ pitest-junit5 = "1.2.1"
 
 [libraries]
 # Kotlin
+arrow-core = { module = "io.arrow-kt:arrow-core", version.ref = "arrow" }
 kotlinx-coroutines-core = { module = "org.jetbrains.kotlinx:kotlinx-coroutines-core", version.ref = "coroutines" }
 kotlinx-coroutines-test = { module = "org.jetbrains.kotlinx:kotlinx-coroutines-test", version.ref = "coroutines" }
 # Carries the SLF4J MDC (requestId, userId) across coroutine thread switches

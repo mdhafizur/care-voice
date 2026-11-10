@@ -1,12 +1,12 @@
 package com.carevoice.documentation.application
 
+import arrow.core.Either
 import com.carevoice.contracts.ObservationRecordedEvent
 import com.carevoice.contracts.VitalPayload
 import com.carevoice.documentation.resilience.LogType
 import com.carevoice.documentation.resilience.event
 import com.carevoice.domain.application.ProcessingResult
 import com.carevoice.domain.application.TranscriptProcessor
-import com.carevoice.domain.common.Either
 import com.carevoice.domain.model.BlankInput
 import com.carevoice.domain.model.BloodPressure
 import com.carevoice.domain.model.BodyTemperature

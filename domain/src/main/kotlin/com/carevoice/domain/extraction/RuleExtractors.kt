@@ -1,9 +1,8 @@
 package com.carevoice.domain.extraction
 
-import com.carevoice.domain.common.Either
-import com.carevoice.domain.common.fold
-import com.carevoice.domain.common.left
-import com.carevoice.domain.common.right
+import arrow.core.Either
+import arrow.core.left
+import arrow.core.right
 import com.carevoice.domain.model.BloodPressure
 import com.carevoice.domain.model.Confidence
 import com.carevoice.domain.model.ExtractionSource
@@ -73,8 +72,8 @@ private fun <V : VitalSign> Either<ValidationError, V>.toOutcome(
     matchedText: String,
     confidence: Double,
 ): ExtractionOutcome = fold(
-    onLeft = { RejectedCandidate(matchedText, it).left() },
-    onRight = { ExtractedVital(it, Confidence(confidence), ExtractionSource.RULES, matchedText).right() },
+    ifLeft = { RejectedCandidate(matchedText, it).left() },
+    ifRight = { ExtractedVital(it, Confidence(confidence), ExtractionSource.RULES, matchedText).right() },
 )
 
 /** "blood pressure 120/75", "bp: 135/85", or a bare "120/75" at lower confidence. */

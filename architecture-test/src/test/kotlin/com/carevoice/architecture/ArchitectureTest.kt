@@ -31,6 +31,14 @@ class ArchitectureTest {
             domainFiles.assertTrue(strict = true) { it.hasPackage("com.carevoice.domain..") }
         }
 
+        @Test
+        fun `should import only Kotlin, Arrow's core library and java time and UUID in the domain`() {
+            // An allow-list, not a block-list: a new dependency in the domain fails here until it is a decision.
+            production.filesIn("com.carevoice.domain..").assertTrue(
+                additionalMessage = "The domain may only use ${ArchitectureValues.domainAllowedImports} (ADR-0027).",
+            ) { file -> file.imports.all { import -> ArchitectureValues.domainAllowedImports.any { import.isIn(it) } } }
+        }
+
         @ParameterizedTest(name = "should not import {0} in the domain")
         @FieldSource("com.carevoice.architecture.ArchitectureValues#frameworkPackages")
         fun `should keep frameworks and drivers out of the domain`(forbiddenPackage: String) {
