@@ -39,6 +39,9 @@ x-documentation-env: &documentation-env
   DATABASE_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
   DATABASE_MIGRATE_ON_STARTUP: "false"
   REDIS_URL: redis://redis:6379
+  # Believe X-Forwarded-For only from Traefik, so the login limit counts real clients instead of Traefik's address.
+  # The service has no host port: only containers on the compose network (private addresses) can connect to it.
+  TRUSTED_PROXIES: 10.0.0.0/8,172.16.0.0/12,192.168.0.0/16
   RABBITMQ_URL: amqp://${RABBITMQ_USER:-admin}:${RABBITMQ_PASSWORD:?set RABBITMQ_PASSWORD in .env}@rabbitmq:5672/${RABBITMQ_VHOST:-carevoice}
   ALERT_SERVICE_URL: http://alert-service:8081
   # Application log level (com.carevoice.*); libraries keep INFO/WARN. DEBUG locally, INFO in Kubernetes.

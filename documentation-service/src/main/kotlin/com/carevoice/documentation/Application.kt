@@ -310,6 +310,7 @@ class ServiceSystem private constructor(
                     HttpSettings(
                         rateLimitPerMinute = config.rateLimitPerMinute,
                         requestTimeout = config.requestTimeout,
+                        trustedProxies = config.trustedProxies,
                     ),
                 )
 

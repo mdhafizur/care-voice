@@ -166,6 +166,9 @@ services:
       DATA_ENCRYPTION_KEY_ID: v1
       TRANSCRIPT_RETENTION_DAYS: "30"
       RATE_LIMIT_PER_MINUTE: "120"
+      # Pod network of the ingress controller (k3s default cluster CIDR): only its X-Forwarded-For is believed, for
+      # the per-IP login limit. Set to your cluster's pod CIDR (or the ingress pods' range) in production.
+      TRUSTED_PROXIES: 10.42.0.0/16
       AI_FALLBACK_ENABLED: "false"
       # claude (AI_MODEL, ANTHROPIC_API_KEY) or gemini (GEMINI_MODEL, GEMINI_API_KEY)
       AI_PROVIDER: claude

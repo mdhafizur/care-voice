@@ -31,6 +31,7 @@ data class AppConfig(
     val demoSeed: DemoSeedConfig,
     val rateLimitPerMinute: Int,
     val requestTimeout: Duration = 30.seconds,
+    val trustedProxies: List<IpNetwork> = emptyList(),
 ) {
     /** Never prints secrets, so the config can be logged at startup and appear in failed assertions safely. */
     override fun toString(): String =
@@ -38,7 +39,7 @@ data class AppConfig(
             "encryption=$encryption, eventTransport=$eventTransport, alertServiceUrl=$alertServiceUrl, " +
             "rabbitmqUrl=${rabbitmqUrl?.let { redactUserInfo(it) }}, redisUrl=${redactUserInfo(redisUrl)}, ai=$ai, " +
             "transcriptRetention=$transcriptRetention, demoSeed=$demoSeed, rateLimitPerMinute=$rateLimitPerMinute, " +
-            "requestTimeout=$requestTimeout)"
+            "requestTimeout=$requestTimeout, trustedProxies=$trustedProxies)"
 
     companion object {
         /**
@@ -222,12 +223,21 @@ private class ConfigLoader(private val env: Map<String, String>) {
                 demoSeed = DemoSeedConfig(demoEnabled, demoPassword),
                 rateLimitPerMinute = int("RATE_LIMIT_PER_MINUTE", default = 120, range = 1..100_000),
                 requestTimeout = int("REQUEST_TIMEOUT_MS", default = 30_000, range = 1_000..120_000).milliseconds,
+                trustedProxies = networks("TRUSTED_PROXIES"),
             )
         if (errors.isNotEmpty()) throw ConfigException(errors.toList())
         return config
     }
 
     private fun optional(name: String): String? = env[name]?.trim()?.takeIf { it.isNotEmpty() }
+
+    /** Comma-separated CIDR networks (`10.42.0.0/16,fd00::/8`); empty when unset. Every invalid entry is reported. */
+    private fun networks(name: String): List<IpNetwork> {
+        val entries = optional(name)?.split(',')?.map { it.trim() }?.filter { it.isNotEmpty() }.orEmpty()
+        return entries.mapNotNull { entry ->
+            IpNetwork.parse(entry) ?: null.also { errors += "$name: '$entry' is not an IP address or CIDR network" }
+        }
+    }
 
     private fun required(name: String): String = optional(name) ?: run {
         errors += "$name is required"

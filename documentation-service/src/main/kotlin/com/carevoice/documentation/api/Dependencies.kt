@@ -10,6 +10,7 @@ import com.carevoice.documentation.application.ObservationStream
 import com.carevoice.documentation.application.QueryObservations
 import com.carevoice.documentation.application.Readiness
 import com.carevoice.documentation.application.SubmitTranscript
+import com.carevoice.documentation.config.IpNetwork
 import com.carevoice.documentation.config.JwtConfig
 import io.micrometer.prometheusmetrics.PrometheusMeterRegistry
 import java.time.Clock
@@ -23,6 +24,8 @@ data class HttpSettings(
     val maxBodyBytes: Long = 64L * 1024,
     val sseHeartbeat: Duration = 15.seconds,
     val requestTimeout: Duration = 30.seconds,
+    /** Proxies whose `X-Forwarded-For` is believed (`TRUSTED_PROXIES`); empty = the header is ignored. */
+    val trustedProxies: List<IpNetwork> = emptyList(),
 )
 
 /**
