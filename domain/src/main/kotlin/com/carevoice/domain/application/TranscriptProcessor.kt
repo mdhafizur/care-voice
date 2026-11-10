@@ -53,38 +53,36 @@ class TranscriptProcessor(
     private val clock: Clock = Clock.systemUTC(),
     private val newId: () -> ObservationId = ObservationId::random,
 ) {
-    suspend fun process(
-        residentId: ResidentId,
-        transcript: String,
-    ): Either<ValidationError, ProcessingResult> = either {
-        ensure(transcript.isNotBlank()) { BlankInput("transcript") }
-        ensure(transcript.length <= MAX_TRANSCRIPT_LENGTH) { TooLong("transcript", MAX_TRANSCRIPT_LENGTH) }
+    suspend fun process(residentId: ResidentId, transcript: String): Either<ValidationError, ProcessingResult> =
+        either {
+            ensure(transcript.isNotBlank()) { BlankInput("transcript") }
+            ensure(transcript.length <= MAX_TRANSCRIPT_LENGTH) { TooLong("transcript", MAX_TRANSCRIPT_LENGTH) }
 
-        val normalized = TranscriptNormalizer.normalize(transcript)
-        val ruleOutcomes = rules.extract(normalized)
+            val normalized = TranscriptNormalizer.normalize(transcript)
+            val ruleOutcomes = rules.extract(normalized)
 
-        val ai = aiFallback?.takeIf { ruleOutcomes.none { it is Either.Right } }
-        val outcomes = if (ai == null) ruleOutcomes else ruleOutcomes + ai.extract(normalized).map { it.validate() }
+            val ai = aiFallback?.takeIf { ruleOutcomes.none { it is Either.Right } }
+            val outcomes = if (ai == null) ruleOutcomes else ruleOutcomes + ai.extract(normalized).map { it.validate() }
 
-        // One timestamp for the whole transcript: the values were spoken together, so they were observed together.
-        val now = clock.instant()
-        val extracted = outcomes.filterIsInstance<Either.Right<ExtractedVital>>().map { it.value }
-        val rejected = outcomes.filterIsInstance<Either.Left<RejectedCandidate>>().map { it.value }
+            // One timestamp for the whole transcript: the values were spoken together, so they were observed together.
+            val now = clock.instant()
+            val extracted = outcomes.filterIsInstance<Either.Right<ExtractedVital>>().map { it.value }
+            val rejected = outcomes.filterIsInstance<Either.Left<RejectedCandidate>>().map { it.value }
 
-        val observations =
-            extracted.map { vital ->
-                Observation(
-                    id = newId(),
-                    residentId = residentId,
-                    vital = vital.vital,
-                    recordedAt = now,
-                    source = vital.source,
-                    confidence = vital.confidence,
-                    status = ReviewPolicy.statusFor(vital),
-                )
-            }
-        ProcessingResult(observations, rejected, usedAiFallback = ai != null)
-    }
+            val observations =
+                extracted.map { vital ->
+                    Observation(
+                        id = newId(),
+                        residentId = residentId,
+                        vital = vital.vital,
+                        recordedAt = now,
+                        source = vital.source,
+                        confidence = vital.confidence,
+                        status = ReviewPolicy.statusFor(vital),
+                    )
+                }
+            ProcessingResult(observations, rejected, usedAiFallback = ai != null)
+        }
 
     companion object {
         /** Matches the API limit (422 above it); a minute of dictation is far below, so longer input is not a note. */
