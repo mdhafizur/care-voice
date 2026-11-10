@@ -80,6 +80,7 @@ FROM ${JDK_IMAGE} AS jre
 #   jdk.jfr          Java Flight Recorder, available on demand via JAVA_TOOL_OPTIONS; also used by the agent's
 #                    runtime-telemetry
 #   jdk.naming.dns   DNS lookups through JNDI (mongodb+srv / SRV records), loaded reflectively
+#   jdk.jdwp.agent   the Java debug agent (-agentlib:jdwp), only switched on by docker-compose.debug.yml
 #   java.logging, java.management  needed by the agent itself
 # --compress=zip-6 is the JDK 21 spelling (the numeric --compress=2 is deprecated since 21).
 # --strip-debug needs objcopy, which the Temurin JDK image ships (binutils).
@@ -87,7 +88,7 @@ FROM ${JDK_IMAGE} AS jre
 # modules (kotlinx-coroutines-reactive requires org.reactivestreams), and it cannot see modules needed only by
 # ServiceLoader-loaded libraries (logback -> java.xml, JDBC driver). If a new library needs another module, the app
 # fails at startup with NoClassDefFoundError naming the class; add its module here.
-ARG JRE_MODULES=java.base,java.compiler,java.desktop,java.instrument,java.logging,java.management,java.naming,java.security.jgss,java.security.sasl,java.sql,java.xml,jdk.crypto.ec,jdk.jfr,jdk.management,jdk.naming.dns,jdk.net,jdk.unsupported
+ARG JRE_MODULES=java.base,java.compiler,java.desktop,java.instrument,java.logging,java.management,java.naming,java.security.jgss,java.security.sasl,java.sql,java.xml,jdk.crypto.ec,jdk.jfr,jdk.management,jdk.jdwp.agent,jdk.naming.dns,jdk.net,jdk.unsupported
 RUN set -eux; \
     jlink \
       --add-modules "${JRE_MODULES}" \

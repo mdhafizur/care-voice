@@ -16,7 +16,7 @@ TEST_FILTER := $(if $(TEST),--tests '$(TEST)',)
 .PHONY: help build assemble install test test-embedded test-containers test-arch test-fault check \
         format lint coverage coverage-verify pitest pact sbom run-documentation run-alert \
         load-smoke load load-stress deps refresh clean \
-        up up-fast images-fast down logs ps migrate dlq-replay db-shell mongo-shell redis-cli rabbitmq-ui grafana monitoring-up admin-up tools-up observability-reset \
+        up up-fast up-debug images-fast down logs ps migrate dlq-replay db-shell mongo-shell redis-cli rabbitmq-ui grafana monitoring-up admin-up tools-up observability-reset \
         security-scan db-bench demo demo-check reset-demo k8s-up k8s-down k8s-status k8s-cache-clean k8s-pg-restore-drill
 
 help: ## List all targets
@@ -128,6 +128,11 @@ images-fast: ## Build the images from jars compiled on this machine (local Gradl
 
 up-fast: images-fast ## Like `up`, but with images-fast: much quicker on a laptop
 	$(COMPOSE) up -d
+
+up-debug: images-fast ## Like up-fast, with one replica per service and a debug port (5005 doc, 5006 alert) for IntelliJ
+	$(COMPOSE) -f docker-compose.yml -f docker-compose.debug.yml up -d
+	@echo "IntelliJ: run 'Debug documentation-service (Docker)' (localhost:5005) or 'Debug alert-service (Docker)' (localhost:5006)"
+	@echo "Back to normal (2 replicas, no debug port): make up-fast"
 
 down: ## Stop and remove the stack's containers (volumes are kept)
 	$(COMPOSE) --profile monitoring --profile admin down

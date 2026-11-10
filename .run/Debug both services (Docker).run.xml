@@ -1,0 +1,7 @@
+<component name="ProjectRunConfigurationManager">
+  <configuration default="false" name="Debug both services (Docker)" type="CompoundRunConfigurationType">
+    <toRun name="Debug documentation-service (Docker)" type="Remote" />
+    <toRun name="Debug alert-service (Docker)" type="Remote" />
+    <method v="2" />
+  </configuration>
+</component>

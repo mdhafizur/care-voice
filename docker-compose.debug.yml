@@ -1,0 +1,31 @@
+# Debug overlay: attach IntelliJ's debugger to the services running in Docker (make up-debug).
+#   docker compose -f docker-compose.yml -f docker-compose.debug.yml up -d
+# - One replica per service, so every request reaches the JVM you are debugging (Traefik would otherwise spread
+#   requests over two containers, and a breakpoint would hit only half of the time).
+# - JDWP (the Java debug protocol) on 127.0.0.1:5005 (documentation-service) and 127.0.0.1:5006 (alert-service). Only
+#   on localhost: an open debug port lets anyone run code in the JVM.
+# - JDK_JAVA_OPTIONS is read by the `java` launcher and added to the image's JAVA_TOOL_OPTIONS (OpenTelemetry agent,
+#   memory flags), so nothing from the Dockerfile is lost. suspend=n: the service starts without waiting for a debugger.
+# - REQUEST_TIMEOUT_MS at its maximum (120 s): the request deadline would otherwise cancel a request after 30 s while
+#   you are still stepping through it.
+# IntelliJ: run configurations "Debug documentation-service (Docker)" / "Debug alert-service (Docker)" in .run/.
+# Set breakpoints to "Suspend: Thread" (right-click the breakpoint): with "All", the whole JVM stops, /readyz stops
+# answering and Traefik takes the container out of rotation until you resume.
+services:
+  documentation-service:
+    deploy:
+      replicas: 1
+    environment:
+      JDK_JAVA_OPTIONS: "-agentlib:jdwp=transport=dt_socket,server=y,suspend=n,address=*:5005"
+      REQUEST_TIMEOUT_MS: "120000"
+    ports:
+      - "127.0.0.1:5005:5005"
+
+  alert-service:
+    deploy:
+      replicas: 1
+    environment:
+      JDK_JAVA_OPTIONS: "-agentlib:jdwp=transport=dt_socket,server=y,suspend=n,address=*:5005"
+      REQUEST_TIMEOUT_MS: "120000"
+    ports:
+      - "127.0.0.1:5006:5005"
