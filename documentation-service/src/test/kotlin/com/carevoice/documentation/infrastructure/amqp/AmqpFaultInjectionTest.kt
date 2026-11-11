@@ -3,6 +3,7 @@ package com.carevoice.documentation.infrastructure.amqp
 import com.carevoice.documentation.outbox.OutboxTestFixtures
 import com.carevoice.documentation.outbox.PublishResult
 import com.carevoice.documentation.outbox.awaitUntil
+import com.carevoice.documentation.resilience.CircuitBreakerSettings
 import com.carevoice.testsupport.TestDatabases
 import com.rabbitmq.client.BuiltinExchangeType
 import com.rabbitmq.client.ConnectionFactory
@@ -76,7 +77,16 @@ class AmqpFaultInjectionTest {
         val uri = "amqp://${rabbit.adminUsername}:${rabbit.adminPassword}@${toxiproxy.host}:${toxiproxy.getMappedPort(
             PROXY_PORT,
         )}"
-        publisher = AmqpEventPublisher(uri, meterRegistry, confirmTimeout = 1.seconds)
+        // The default breaker opens after 20 failures for 30s; the recovery test polls every 10ms while the client
+        // reconnects, so it would trip the breaker and wait out the whole test timeout. A short open state keeps the
+        // breaker in play (half-open trials) without hiding the recovery.
+        publisher =
+            AmqpEventPublisher(
+                uri,
+                meterRegistry,
+                confirmTimeout = 1.seconds,
+                circuitBreakerSettings = CircuitBreakerSettings(waitDurationInOpenState = 1.seconds),
+            )
     }
 
     @AfterEach
