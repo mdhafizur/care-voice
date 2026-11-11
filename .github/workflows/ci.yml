@@ -21,7 +21,10 @@ concurrency:
 jobs:
   build:
     name: Build and test
-    runs-on: ubuntu-24.04
+    # ubuntu-22.04 (Linux kernel 6.8) on purpose: the ubuntu-24.04 runners moved to a kernel newer than 6.19, on which
+    # MongoDB 8.0 refuses to start ("known incompatibility"), so the mongo:8.0 Testcontainer exits with code 1.
+    # Go back to ubuntu-24.04 once a MongoDB 8.0 patch release supports the new kernels.
+    runs-on: ubuntu-22.04
     timeout-minutes: 45
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
