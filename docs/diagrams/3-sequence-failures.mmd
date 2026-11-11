@@ -1,0 +1,42 @@
+sequenceDiagram
+    autonumber
+    participant Relay as Outbox relay
+    participant PG as PostgreSQL
+    participant MQ as RabbitMQ
+    participant Q as alert-service.observations
+    participant RQ as retry tiers (5 s … 30 min)
+    participant DLQ as DLQ
+    participant AS as alert-service
+    participant M as MongoDB
+
+    note over Relay,MQ: Publishing side: the outbox holds the events, nurses keep documenting
+    Relay->>MQ: publish
+    MQ--xRelay: nack / timeout / broker down
+    Relay->>PG: attempts + 1, next try after<br/>random(0, min(60 s, 0.5 s · 2^(attempts − 1)))
+    opt 50 % of the last 20 calls failed
+        Relay->>Relay: circuit OPEN for 30 s: rows wait, no attempt counted
+    end
+    opt 4xx from alert-service (HTTP transport), or 10 attempts AND older than 24 h
+        Relay->>PG: status = DEAD (metric + Grafana alert)
+    end
+
+    note over Q,M: Consuming side: at-least-once, idempotent
+    Q->>AS: deliver
+    AS->>M: insert
+    M--xAS: primary unavailable
+    alt Mongo health check says DOWN (outage)
+        AS->>Q: cancel the subscription, basicNack(requeue = true), no attempt counted
+        AS->>M: health check every 5 s
+        AS->>Q: subscribe again once MongoDB is healthy
+    else MongoDB answers again (short blip)
+        AS->>RQ: publish to the tier for this attempt (x-carevoice-attempt + 1), then basicAck
+        RQ-->>Q: after the tier's TTL, routed back to this queue only
+        Q->>AS: deliver again
+    end
+    alt MongoDB is back
+        AS->>M: insert succeeds
+        AS->>Q: basicAck
+    else delivery 6 failed (~43 min), or invalid JSON / unknown schemaVersion
+        AS->>DLQ: publish to carevoice.events.dlx
+        AS->>Q: basicAck (replay later: make dlq-replay)
+    end

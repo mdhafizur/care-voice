@@ -1,0 +1,53 @@
+flowchart TB
+    browser(("Browser / Postman<br/>*.carevoice.127.0.0.1.nip.io:9080")) --> lb
+
+    subgraph k3d["k3d cluster 'carevoice': 1 server + 2 agents (Docker containers), zones a and b"]
+        lb["k3d load balancer<br/>127.0.0.1:9080 → 80, :9443 → 443"]
+
+        subgraph ks["namespace kube-system"]
+            traefik["Traefik ingress (comes with k3s)<br/>carevoice. · grafana. · minio."]
+            dns["CoreDNS · metrics-server"]
+        end
+
+        subgraph ns_app["namespace carevoice"]
+            subgraph dsd["Deployment documentation-service<br/>HPA 2–6 · PDB · spread over nodes/zones"]
+                ds1["pod"]
+                ds2["pod"]
+            end
+            subgraph asd["Deployment alert-service<br/>HPA 2–6 · PDB · not exposed"]
+                as1["pod"]
+                as2["pod"]
+            end
+            np["NetworkPolicies on the service pods:<br/>deny by default + allow-list"]
+            jobs["Migration Jobs<br/>Helm pre-install / pre-upgrade"]
+            pooler["Pooler carevoice-pg-pooler-rw<br/>PgBouncer ×2 · transaction mode"]
+            pgc[("Cluster carevoice-pg<br/>primary + replica<br/>WAL archiving · nightly backup")]
+            minio[("MinIO<br/>bucket carevoice-pg-backups")]
+            rmq{{"RabbitmqCluster<br/>3 nodes · quorum queues"}}
+            mgo[("StatefulSet carevoice-mongodb<br/>rs0 · 3 members")]
+            rds[("Redis<br/>(single instance locally)")]
+        end
+
+        subgraph ns_obs["namespace observability"]
+            lgtm["Grafana otel-lgtm<br/>Prometheus scrapes services,<br/>Postgres, RabbitMQ, MinIO"]
+        end
+
+        subgraph ns_ops["operator namespaces"]
+            ops["cert-manager · cnpg-system<br/>(CloudNativePG + Barman Cloud plugin)<br/>rabbitmq-system"]
+        end
+    end
+
+    lb --> traefik
+    traefik --> ds1 & ds2
+    traefik --> lgtm
+    traefik -- "console only" --> minio
+    ds1 & ds2 --> pooler --> pgc
+    jobs -- "direct (DATABASE_MIGRATION_URL)" --> pgc
+    jobs --> mgo
+    ds1 & ds2 --> rds
+    ds1 & ds2 --> rmq
+    rmq --> as1 & as2
+    as1 & as2 --> mgo
+    pgc -- "WAL + base backups" --> minio
+    ds1 & ds2 & as1 & as2 -. "OTLP :4318" .-> lgtm
+    ops -. "manage" .-> pgc & pooler & rmq

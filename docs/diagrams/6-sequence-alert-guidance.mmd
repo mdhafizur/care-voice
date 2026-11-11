@@ -1,0 +1,26 @@
+sequenceDiagram
+    autonumber
+    actor Lead as Ward lead
+    participant AS as alert-service
+    participant M as MongoDB
+    participant E as Embedder<br/>(local hashing | Voyage | Gemini)
+    participant C as Writer: Claude or Gemini<br/>(optional)
+
+    note over AS,M: At startup: protocols (markdown) → one chunk per section → embed → protocol_chunks<br/>(skipped when the corpus version has not changed)
+
+    Lead->>AS: GET /v1/alerts/{alertId}/guidance (JWT, WARD_LEAD)
+    AS->>M: find the alert in the caller's ward (else 404)
+    AS->>M: load the protocol chunks of this embedding model
+    AS->>E: embed one query per aspect<br/>clinical: "hypertensive crisis … 185/95 mmHg"<br/>review: only for an unconfirmed value
+    E-->>AS: query vectors (embedder down → 503 at once, circuit breaker)
+    AS->>AS: cosine similarity → best protocol per aspect<br/>→ all its sections (small-to-big), review protocol first
+    alt no section above the threshold
+        AS-->>Lead: 200 NO_MATCHING_PROTOCOL (no steps, no sources)
+    else protocol found
+        opt GUIDANCE_AI_ENABLED
+            AS->>C: alert + excerpts with ids: "cite every step, or NO_GUIDANCE"
+            C-->>AS: steps with citations
+        end
+        AS->>AS: citation check: steps may cite retrieved sections only<br/>failed, declined, error or open breaker → copy the protocol's own steps
+        AS-->>Lead: 200 FOUND · generatedBy CLAUDE | GEMINI | EXTRACTIVE<br/>steps[] with citations · sources[] · disclaimer
+    end

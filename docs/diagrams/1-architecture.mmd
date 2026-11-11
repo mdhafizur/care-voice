@@ -1,0 +1,73 @@
+flowchart LR
+    subgraph clients["Clients"]
+        app["Nurse app<br/>(speech-to-text on the phone)"]
+        lead["Ward lead"]
+        gatling["Gatling load tests"]
+    end
+
+    ingress["Traefik<br/>(TLS from cert-manager in Kubernetes)"]
+
+    subgraph doc["documentation-service · Ktor · 2–6 pods"]
+        direction TB
+        dapi["api<br/>routes · login · errors (RFC 9457)<br/>rate limit · request deadline"]
+        dapp["application<br/>use cases · ports"]
+        ddom["domain (pure Kotlin)<br/>normalize → extract → validate → review policy"]
+        dinfra["infrastructure<br/>JDBC · AES-GCM · Caffeine · Redis · AI client"]
+        relay["Outbox relay<br/>SKIP LOCKED · backoff · circuit breaker"]
+        dapi --> dapp --> ddom
+        dapp --> dinfra
+    end
+
+    subgraph alert["alert-service · Ktor · 2–6 pods"]
+        direction TB
+        consumer["AMQP consumer<br/>manual ack · retry tiers<br/>pauses while MongoDB is down"]
+        aapi["api<br/>list · acknowledge · guidance"]
+        rules["alert rules<br/>Strategy + Composite"]
+        guidance["protocol guidance (RAG)<br/>retrieve → write → check citations"]
+        consumer --> rules
+        aapi --> rules
+        aapi --> guidance
+    end
+
+    subgraph data["Data stores"]
+        pgb["PgBouncer<br/>(transaction mode, Kubernetes only)"]
+        pg[("PostgreSQL<br/>users · residents · transcripts<br/>observations · outbox · audit")]
+        redis[("Redis<br/>rate limits · cache invalidation<br/>live updates (SSE)")]
+        mq{{"RabbitMQ<br/>quorum queue · retry tiers · DLQ"}}
+        mongo[("MongoDB rs0<br/>alerts · processed_events<br/>protocol_chunks")]
+        s3[("Object storage (MinIO)<br/>WAL + base backups<br/>Kubernetes only")]
+    end
+
+    llm["AI provider: Claude or Gemini<br/>(extraction fallback + guidance, optional)"]
+    emb["Embeddings: Voyage or Gemini<br/>(optional; default: local hashing)"]
+
+    subgraph obs["Observability"]
+        otel["OTel Java agent<br/>(in every service pod)"]
+        alloy["Grafana Alloy<br/>container logs (compose)"]
+        lgtm["Grafana otel-lgtm<br/>Prometheus · Tempo · Loki"]
+        kuma["Uptime Kuma<br/>status page (compose)"]
+    end
+
+    app -- "HTTPS · JWT · Idempotency-Key" --> ingress
+    gatling --> ingress
+    ingress --> dapi
+    lead -- "JWT (WARD_LEAD)" --> aapi
+
+    dinfra --> pgb --> pg
+    dinfra <--> redis
+    dinfra -. "only when the rules find nothing" .-> llm
+    relay -- "claim PENDING rows" --> pg
+    relay -- "publish + confirms<br/>observation.recorded.v1" --> mq
+    relay -. "alternative: HTTP POST /v1/events/observations" .-> aapi
+    mq -- "deliver" --> consumer
+    rules --> mongo
+    guidance --> mongo
+    guidance -. "GUIDANCE_AI_ENABLED" .-> llm
+    guidance -. "GUIDANCE_EMBEDDER=voyage | gemini" .-> emb
+    pg -. "WAL archiving<br/>(Barman Cloud plugin)" .-> s3
+
+    doc -. "traces · metrics · logs (OTLP)" .-> otel
+    alert -.-> otel
+    otel -.-> lgtm
+    alloy -.-> lgtm
+    kuma -. "/readyz · /livez · ports" .-> ingress

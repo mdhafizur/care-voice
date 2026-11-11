@@ -1,0 +1,60 @@
+sequenceDiagram
+    autonumber
+    actor Nurse as Nurse app
+    participant DS as documentation-service
+    participant R as Redis
+    participant PG as PostgreSQL
+    participant AI as AI provider<br/>(Claude or Gemini)
+    participant Relay as Outbox relay<br/>(any pod)
+    participant MQ as RabbitMQ
+    participant AS as alert-service
+    participant M as MongoDB
+
+    Nurse->>DS: POST /v1/residents/res-1/transcripts<br/>Authorization: Bearer JWT · Idempotency-Key · X-Request-Id
+    DS->>DS: check the token (401) → check the role (403)
+    DS->>R: rate limit counter (Lua script)
+    R-->>DS: allowed (else 429 + Retry-After)
+    DS->>PG: resident in the caller's ward? (else 404)
+    DS->>PG: idempotency key used before?
+    alt same key, same body
+        PG-->>DS: stored response
+        DS-->>Nurse: 200 + Idempotent-Replayed: true
+    else same key, different body
+        DS-->>Nurse: 409 Conflict
+    else new key
+        DS->>DS: domain: normalize → rule extractors → smart constructors
+        opt the rules found nothing and AI is enabled
+            DS->>AI: extract vital signs (AI_TIMEOUT_MS)
+            AI-->>DS: candidates → validated, always NEEDS_REVIEW<br/>(any AI failure → no AI result, never an error)
+        end
+        rect rgb(230, 240, 255)
+            note over DS,PG: ONE transaction (Unit of Work)
+            DS->>PG: INSERT transcript (AES-GCM text, idempotency key, response)
+            DS->>PG: INSERT observations (CONFIRMED / NEEDS_REVIEW)
+            DS->>PG: INSERT outbox row per observation (+ request_id, traceparent)
+            DS->>PG: INSERT audit row
+            DS->>PG: COMMIT
+        end
+        DS->>R: PUBLISH cache invalidation + observation (live updates)
+        DS-->>Nurse: 201 Created + Location
+    end
+
+    loop every pod, all the time
+        Relay->>PG: SELECT … FOR UPDATE SKIP LOCKED LIMIT 50<br/>move next_attempt_at forward by a 30 s lease
+        Relay->>MQ: publish observation.recorded.v1<br/>(message_id = eventId, traceparent)
+        MQ-->>Relay: publisher confirm (ack)
+        Relay->>PG: UPDATE outbox SET status = PUBLISHED
+    end
+
+    MQ->>AS: deliver (prefetch limits unacked messages)
+    AS->>AS: validate the event · evaluate the rules (e.g. systolic ≥ 180 → CRITICAL)
+    AS->>M: INSERT processed_events {eventId, completed: false}<br/>(the unique eventId decides who processes it)
+    alt first delivery
+        AS->>M: INSERT alerts (unique eventId + rule, writeConcern majority)
+        AS->>M: mark processed_events completed
+    else duplicate, record completed
+        M-->>AS: duplicate key → nothing to do
+    else duplicate, record incomplete (an earlier attempt crashed)
+        AS->>M: run the idempotent alert insert again, mark completed
+    end
+    AS->>MQ: basicAck

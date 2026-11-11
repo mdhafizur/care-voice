@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Interactive live demo of CareVoice against the running compose stack (docs/walkthrough.md, section 3).
+# Interactive live demo of CareVoice against the running compose stack (docs/walkthrough.md, section 2).
 #
 #   make demo            all steps, one at a time (Enter = next, q = quit)
 #   make demo STEP=7     start at step 7
@@ -350,4 +350,4 @@ while [ "$i" -le $LAST ]; do
   [ "$i" -lt $LAST ] && pause
   i=$((i + 1))
 done
-printf '\n%sDemo finished.%s Deep dives: docs/walkthrough.md, section 3 ("Optional deep-dive demos").\n' "$B" "$N"
+printf '\n%sDemo finished.%s Deep dives: docs/walkthrough.md, section 2 ("Optional deep-dive demos").\n' "$B" "$N"

@@ -1,0 +1,26 @@
+sequenceDiagram
+    autonumber
+    actor A as Nurse A
+    actor B as Nurse B
+    participant DS as documentation-service
+    participant PG as PostgreSQL
+
+    A->>DS: GET /v1/residents/res-1/observations
+    DS-->>A: 200 · item version 0
+    B->>DS: GET /v1/residents/res-1/observations
+    DS-->>B: 200 · item version 0
+
+    A->>DS: PATCH /v1/observations/{id}/confirm<br/>If-Match: "0"
+    DS->>PG: UPDATE … SET status = CONFIRMED, version = version + 1<br/>WHERE id = ? AND version = 0
+    PG-->>DS: 1 row
+    DS-->>A: 200 · ETag: "1"
+
+    B->>DS: PATCH /v1/observations/{id}/confirm<br/>If-Match: "0"
+    DS->>PG: UPDATE … WHERE id = ? AND version = 0
+    PG-->>DS: 0 rows
+    DS-->>B: 412 Precondition Failed (problem+json)
+
+    B->>DS: PATCH … (no If-Match)
+    DS-->>B: 428 Precondition Required
+
+    note over B,DS: With the current version but already CONFIRMED: 409 Conflict

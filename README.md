@@ -6,8 +6,27 @@ structured vital signs, and raises alerts when values are out of range.
 > "Mrs. Smith, blood pressure 120 over 75, pulse 80, temperature 37 point 2 degrees"
 > → `BloodPressure(120/75)`, `Pulse(80)`, `BodyTemperature(37.2 °C)`, all `CONFIRMED`
 
-It is a deliberately compact demo of how I structure Kotlin backend code: small enough to explain fully in
-20 minutes, but with the production concerns a real system needs.
+CareVoice is a portfolio project: a compact system, built the way a production backend is built. It shows how I
+design, test, operate and document Kotlin services.
+
+**Stack:** Kotlin · Ktor · coroutines · Arrow · PostgreSQL · MongoDB · RabbitMQ · Redis · OpenTelemetry · Grafana ·
+Docker · Kubernetes (Helm, k3d)
+
+## Highlights
+
+- **No lost data.** A transcript, its observations and its event are saved in one transaction (transactional outbox),
+  and every retry is safe (idempotency keys, optimistic locking).
+- **Built for failure.** Timeouts, retries with backoff, circuit breakers and backpressure on every remote call.
+  When a dependency is down, work waits instead of failing, and the demo breaks dependencies on purpose to show it.
+- **AI that is never trusted blindly.** Fixed rules extract values first; an LLM (Claude or Gemini) is only a
+  fallback, its output passes the same validation, and a nurse confirms it. Alert guidance is retrieval-augmented and
+  must cite the care protocol.
+- **Observable.** One request can be followed through both services: structured logs, traces and metrics in Grafana.
+- **Operable.** Two replicas per service, Helm chart, PostgreSQL with failover, continuous backups and a restore
+  drill that proves them.
+- **Tested in depth.** Unit, integration, contract (Pact), architecture (Konsist), fault-injection, query-plan and
+  load tests.
+- **Documented decisions.** 27 Architecture Decision Records, each with its alternatives and costs.
 
 ## Architecture
 
@@ -21,7 +40,7 @@ It is a deliberately compact demo of how I structure Kotlin backend code: small 
 - **[docs/kubernetes.md](docs/kubernetes.md)**: how Kubernetes works, mapped to this repo, and how to run the local
   k3d cluster.
 - **[docs/walkthrough.md](docs/walkthrough.md)**: a guided tour: a live demo in 14 steps (`make demo`), the
-  requirements and how they are met, decisions and their costs, open gaps with fixes, questions by perspective.
+  requirements and how they are met, decisions and their costs, open gaps with fixes, questions and answers.
 - **[docs/availability.md](docs/availability.md)**: why every service runs as several pods, why two services instead
   of a monolith, what happens when Postgres, MongoDB, RabbitMQ or Redis is down, and how Postgres is backed up.
 - **[docs/indexing.md](docs/indexing.md)**: every index and the query it serves, benchmark numbers on 1M rows, and
