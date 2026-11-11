@@ -1,4 +1,14 @@
-# CareVoice CI: build + tests (Testcontainers), reports, SBOMs, container images, image scan, dependency review.
+# CareVoice CI. Fast checks first and in parallel; the slow jobs only start when the code compiles and is clean.
+#
+#   checks ──┬── integration      service tests against Testcontainers (same images as production), contracts, coverage
+#            ├── fault-injection  Toxiproxy cuts and slows RabbitMQ (excluded from the normal test run)
+#            └── images           Docker images from the jars built in `checks` (no second compile), Trivy scan
+#   config                        Helm chart, Kubernetes manifests and docker compose files are valid
+#   secrets                       gitleaks over the whole git history
+#   dependency-review             pull requests only
+#
+# Each job has one purpose, so a red mark names what broke, and every test job writes a table of failed tests to the
+# run page (scripts/ci/junit-summary.py).
 #
 # Third-party actions are pinned to full commit SHAs (tags can be moved: see the March 2026 trivy-action
 # compromise, https://www.aquasec.com/blog/trivy-supply-chain-attack-what-you-need-to-know). The comment after each
@@ -19,13 +29,10 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
-  build:
-    name: Build and test
-    # ubuntu-22.04 (Linux kernel 6.8) on purpose: the ubuntu-24.04 runners moved to a kernel newer than 6.19, on which
-    # MongoDB 8.0 refuses to start ("known incompatibility"), so the mongo:8.0 Testcontainer exits with code 1.
-    # Go back to ubuntu-24.04 once a MongoDB 8.0 patch release supports the new kernels.
-    runs-on: ubuntu-22.04
-    timeout-minutes: 45
+  checks:
+    name: Checks (format, compile, architecture, domain)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
@@ -41,18 +48,85 @@ jobs:
         with:
           cache-read-only: ${{ github.ref != 'refs/heads/main' }}
 
-      # compile, tests, spotlessCheck, koverVerify (CONTRACTS section 3). Testcontainers use the runner's Docker.
-      - name: Build
+      - name: Format (ktlint via Spotless)
+        run: ./gradlew spotlessCheck
+
+      - name: Compile everything, including tests
+        run: ./gradlew assemble testClasses
+
+      # Modules without databases: the domain's ~400 tests, the shared contracts, the Konsist architecture rules,
+      # each with its coverage gate.
+      - name: Domain, contracts and architecture tests
+        run: ./gradlew :domain:check :contracts:check :test-support:check :architecture-test:check -x spotlessCheck
+
+      # The runnable services, handed to the images job, so the Dockerfiles copy them instead of compiling again.
+      # tar keeps the executable bit of bin/<service>, which upload-artifact would drop.
+      - name: Package the services
+        run: |
+          ./gradlew :documentation-service:installDist :alert-service:installDist
+          tar -cf install-dists.tar documentation-service/build/install alert-service/build/install
+
+      - name: Upload the packaged services
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: install-dists
+          path: install-dists.tar
+          retention-days: 1
+
+      - name: Test summary
+        if: ${{ !cancelled() }}
+        run: python3 scripts/ci/junit-summary.py "Checks"
+
+      - name: Upload test reports
+        if: ${{ failure() }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: test-reports-checks
+          path: |
+            **/build/test-results/test/
+            **/build/reports/tests/
+          if-no-files-found: ignore
+          retention-days: 14
+
+  integration:
+    name: Integration tests (Testcontainers, contracts, coverage)
+    needs: checks
+    # ubuntu-22.04 (Linux kernel 6.8) on purpose: the ubuntu-24.04 runners moved to a kernel newer than 6.19, on which
+    # MongoDB 8.0 refuses to start ("known incompatibility"), so the mongo:8.0 Testcontainer exits with code 1.
+    # Go back to ubuntu-24.04 once a MongoDB 8.0 patch release supports the new kernels.
+    runs-on: ubuntu-22.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Set up JDK 21
+        uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad # v6.1.0
+        with:
+          distribution: temurin
+          java-version: "21"
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@3f5f9adaf7d9fecd50b5935e54106014257a94e6 # v6.4.0
+        with:
+          cache-read-only: ${{ github.ref != 'refs/heads/main' }}
+
+      # Both services' tests (HTTP, Postgres, MongoDB, Redis, RabbitMQ, Pact consumer and provider) and their coverage
+      # gates. CAREVOICE_TEST_DB=containers: the same database images as production, on the runner's Docker.
+      - name: Service tests
         env:
           CAREVOICE_TEST_DB: containers
-        run: ./gradlew build --continue
+        run: ./gradlew :documentation-service:check :alert-service:check -x spotlessCheck --continue
 
       - name: Coverage report (XML + HTML)
         if: ${{ !cancelled() }}
-        run: ./gradlew koverXmlReport koverHtmlReport
+        run: ./gradlew :documentation-service:koverXmlReport :documentation-service:koverHtmlReport :alert-service:koverXmlReport :alert-service:koverHtmlReport
 
       - name: CycloneDX SBOMs
         run: ./gradlew :documentation-service:cyclonedxDirectBom :alert-service:cyclonedxDirectBom
+
+      - name: Test summary
+        if: ${{ !cancelled() }}
+        run: python3 scripts/ci/junit-summary.py "Integration tests"
 
       - name: Upload test reports
         if: ${{ !cancelled() }}
@@ -93,11 +167,52 @@ jobs:
           path: pacts/
           if-no-files-found: ignore
 
-  images:
-    name: Image ${{ matrix.service }}
+  fault-injection:
+    name: Fault injection (Toxiproxy)
+    needs: checks
     runs-on: ubuntu-24.04
     timeout-minutes: 30
-    needs: build
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Set up JDK 21
+        uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad # v6.1.0
+        with:
+          distribution: temurin
+          java-version: "21"
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@3f5f9adaf7d9fecd50b5935e54106014257a94e6 # v6.4.0
+        with:
+          cache-read-only: true
+
+      # The tests tagged fault-injection (same as `make test-fault`): RabbitMQ behind Toxiproxy, cut and slowed while
+      # the publisher works. Excluded from the normal test run because they are slow.
+      - name: Fault-injection tests
+        env:
+          CAREVOICE_TEST_DB: containers
+        run: ./gradlew :documentation-service:test -PincludeTags=fault-injection
+
+      - name: Test summary
+        if: ${{ !cancelled() }}
+        run: python3 scripts/ci/junit-summary.py "Fault injection"
+
+      - name: Upload test reports
+        if: ${{ failure() }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: test-reports-fault-injection
+          path: |
+            **/build/test-results/test/
+            **/build/reports/tests/
+          if-no-files-found: ignore
+          retention-days: 14
+
+  images:
+    name: Image ${{ matrix.service }}
+    needs: checks
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
     strategy:
       fail-fast: false
       matrix:
@@ -105,16 +220,26 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
+      - name: Download the packaged services
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: install-dists
+
+      - name: Unpack
+        run: tar -xf install-dists.tar && rm install-dists.tar
+
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
 
-      # Build context = repository root (CONTRACTS section 14); layers cached in the GitHub Actions cache per service.
-      # load: true puts the image into the local Docker engine for the scan; nothing is pushed.
+      # Build context = repository root (CONTRACTS section 14). APP_SOURCE=app-from-host copies the services packaged
+      # in `checks` instead of compiling them again inside Docker. Layers cached in the GitHub Actions cache per
+      # service. load: true puts the image into the local Docker engine for the scan; nothing is pushed.
       - name: Build image
         uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
         with:
           context: .
           file: ${{ matrix.service }}/Dockerfile
+          build-args: APP_SOURCE=app-from-host
           tags: carevoice/${{ matrix.service }}:${{ github.sha }}
           load: true
           push: false
@@ -133,6 +258,60 @@ jobs:
           ignore-unfixed: true
           exit-code: "1"
           format: table
+
+  config:
+    name: Deployment config (Helm, Kubernetes, compose)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    env:
+      KUBECONFORM_IMAGE: ghcr.io/yannh/kubeconform:v0.7.0
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      # Helm ships with the runner image. Lint and render the chart with the local (k3d) and the production values,
+      # so a template error is found here, not during a deployment.
+      - name: Helm lint and render
+        run: |
+          mkdir -p build/rendered
+          helm lint deploy/helm/carevoice -f deploy/k8s/values-k3d.yaml
+          helm lint deploy/helm/carevoice -f deploy/helm/carevoice/values-production.yaml
+          helm template carevoice deploy/helm/carevoice -f deploy/k8s/values-k3d.yaml > build/rendered/k3d.yaml
+          helm template carevoice deploy/helm/carevoice -f deploy/helm/carevoice/values-production.yaml \
+            > build/rendered/production.yaml
+
+      # Every rendered and hand-written manifest against the Kubernetes schemas: unknown fields (-strict), wrong types,
+      # missing required fields. Operator resources (CloudNativePG, RabbitMQ, cert-manager, Barman Cloud) have no
+      # schema in the default catalog and are skipped (-ignore-missing-schemas).
+      - name: Validate Kubernetes manifests (kubeconform)
+        run: |
+          docker run --rm -v "$PWD:/work:ro" -w /work "$KUBECONFORM_IMAGE" \
+            -strict -ignore-missing-schemas -summary \
+            build/rendered/k3d.yaml build/rendered/production.yaml \
+            deploy/k8s/databases deploy/k8s/cert-manager \
+            deploy/k8s/observability/otel-lgtm.yaml deploy/k8s/observability/scrape-targets.yaml
+
+      # docker compose resolves every variable, anchor, profile and override; -q prints nothing unless it fails.
+      - name: Validate docker compose files
+        run: |
+          cp .env.example .env
+          docker compose -f docker-compose.yml config -q
+          docker compose -f docker-compose.yml -f docker-compose.debug.yml config -q
+
+  secrets:
+    name: Secret scan (gitleaks)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    env:
+      GITLEAKS_IMAGE: zricethezav/gitleaks:v8.21.2
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0 # the whole history: a secret committed and later deleted is still public
+
+      - name: gitleaks
+        run: |
+          docker run --rm -v "$PWD:/repo:ro" "$GITLEAKS_IMAGE" \
+            detect --source /repo --redact --no-banner --verbose
 
   dependency-review:
     name: Dependency review

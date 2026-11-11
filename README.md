@@ -98,7 +98,7 @@ Docker · Kubernetes (Helm, k3d)
 
 ```bash
 cp .env.example .env      # once; local development defaults
-make build                # compile, all tests, format check, coverage gate (what CI runs)
+make build                # compile, all tests, format check, coverage gate (CI runs the same, split into jobs)
 make up-fast              # docker compose: both services (2 replicas each) and every dependency
 make monitoring-up        # optional: Uptime Kuma with monitors and a status page
 make admin-up             # optional: pgAdmin and mongo-express

@@ -1,0 +1,12 @@
+# gitleaks configuration: the built-in rules, plus an allow-list for files that hold only local development
+# defaults and test fixtures (fake keys such as "gemini-test-key-123", the dev-only JWT secret in .env.example).
+# Real secrets live only in .env (never committed) and in Kubernetes Secrets created from it.
+[extend]
+useDefault = true
+
+[allowlist]
+description = "Local development defaults and test fixtures, never real secrets"
+paths = [
+  '''^\.env\.example$''',
+  '''(^|/)src/test/''',
+]

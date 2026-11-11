@@ -24,7 +24,7 @@ help: ## List all targets
 
 ## ---- Build -------------------------------------------------------------------
 
-build: ## Compile, test, format check and coverage gate (everything CI runs)
+build: ## Compile, test, format check and coverage gate (CI runs the same, split into jobs, plus make test-fault)
 	$(GRADLE) $(PREFIX)build $(ARGS)
 
 assemble: ## Compile and package without running tests

@@ -54,6 +54,12 @@ Rules (checked by `architecture-test`):
 - `./gradlew build` compiles, runs the tests, `spotlessCheck` and `koverVerify` (at least 80 % of lines and 65 % of
   branches covered).
 - Services are packaged with `installDist`. The Dockerfile copies `build/install/<service>`.
+- CI (`.github/workflows/ci.yml`) splits the same work into jobs with one purpose each: `checks` (format, compile,
+  domain, contracts and architecture tests, packaging) first; then in parallel `integration` (both services against
+  Testcontainers, Pact, coverage gates, SBOMs), `fault-injection` (Toxiproxy) and `images` (built from the jars of
+  `checks`, Trivy scan); independently `config` (Helm lint and render, kubeconform, `docker compose config`) and
+  `secrets` (gitleaks over the full history, allow-list in `.gitleaks.toml`). Every test job writes a table of failed
+  tests to the run page (`scripts/ci/junit-summary.py`).
 
 ## 4. Configuration (environment variables)
 
