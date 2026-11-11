@@ -18,6 +18,8 @@ caffeine = "3.2.2"
 bcrypt = "0.10.2"
 micrometer = "1.15.2"
 arrow = "2.3.0"
+# Security floor for Netty (comes in through Ktor, Lettuce and the Mongo driver): 4.2.17 fixes CVE-2026-75595.
+netty = "4.2.17.Final"
 resilience4j = "2.4.0"            # seen
 junit = "5.13.4"
 assertj = "3.27.3"
@@ -46,6 +48,7 @@ pitest-junit5 = "1.2.1"
 
 [libraries]
 # Kotlin
+netty-bom = { module = "io.netty:netty-bom", version.ref = "netty" }
 arrow-core = { module = "io.arrow-kt:arrow-core", version.ref = "arrow" }
 kotlinx-coroutines-core = { module = "org.jetbrains.kotlinx:kotlinx-coroutines-core", version.ref = "coroutines" }
 kotlinx-coroutines-test = { module = "org.jetbrains.kotlinx:kotlinx-coroutines-test", version.ref = "coroutines" }
