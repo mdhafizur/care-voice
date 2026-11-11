@@ -40,6 +40,7 @@ import org.junit.jupiter.params.ParameterizedTest
 import org.junit.jupiter.params.provider.ValueSource
 import kotlin.random.Random
 import kotlin.time.Duration.Companion.milliseconds
+import kotlin.time.Duration.Companion.seconds
 
 /**
  * The Gemini wire format. Retries, the circuit breaker and the answer parsing are shared with Claude
@@ -75,7 +76,8 @@ class GeminiVitalExtractorTest {
         settings = AiSettings(
             apiKey = API_KEY,
             model = model,
-            timeout = 300.milliseconds,
+            // Generous for slow CI runners (a cold first request); the timeout test delays well beyond it.
+            timeout = 1.seconds,
             baseUrl = wireMock.baseUrl(),
             thinkingLevel = thinkingLevel,
         ),

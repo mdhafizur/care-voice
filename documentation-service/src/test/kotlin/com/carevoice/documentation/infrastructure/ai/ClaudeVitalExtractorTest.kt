@@ -38,6 +38,7 @@ import org.junit.jupiter.params.provider.MethodSource
 import org.junit.jupiter.params.provider.ValueSource
 import kotlin.random.Random
 import kotlin.time.Duration.Companion.milliseconds
+import kotlin.time.Duration.Companion.seconds
 
 @TestInstance(TestInstance.Lifecycle.PER_CLASS)
 @DisplayName("ClaudeVitalExtractor: POST /v1/messages")
@@ -68,7 +69,8 @@ class ClaudeVitalExtractorTest {
         settings = AiSettings(
             apiKey = API_KEY,
             model = MODEL,
-            timeout = 300.milliseconds,
+            // Generous for slow CI runners (a cold first request); the timeout test delays well beyond it.
+            timeout = 1.seconds,
             baseUrl = wireMock.baseUrl(),
         ),
         httpClient = httpClient,
@@ -107,7 +109,7 @@ class ClaudeVitalExtractorTest {
 
         @Test
         fun `should return no candidates on a timeout without retrying`() {
-            wireMock.stubFor(post(urlEqualTo(PATH)).willReturn(okJson(messagesResponse("[]")).withFixedDelay(1_500)))
+            wireMock.stubFor(post(urlEqualTo(PATH)).willReturn(okJson(messagesResponse("[]")).withFixedDelay(3_000)))
             assertThat(runBlocking { extractor().extract(TRANSCRIPT) }).isEmpty()
             assertThat(wireMock.allServeEvents).hasSize(1)
             assertThat(fallbackCount("timeout")).isEqualTo(1.0)

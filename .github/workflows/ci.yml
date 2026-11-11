@@ -117,8 +117,8 @@ jobs:
           CAREVOICE_TEST_DB: containers
         run: ./gradlew :documentation-service:check :alert-service:check -x spotlessCheck --continue
 
+      # Only after green tests: after a failure, Gradle would run the whole test suite again just to build the report.
       - name: Coverage report (XML + HTML)
-        if: ${{ !cancelled() }}
         run: ./gradlew :documentation-service:koverXmlReport :documentation-service:koverHtmlReport :alert-service:koverXmlReport :alert-service:koverHtmlReport
 
       - name: CycloneDX SBOMs

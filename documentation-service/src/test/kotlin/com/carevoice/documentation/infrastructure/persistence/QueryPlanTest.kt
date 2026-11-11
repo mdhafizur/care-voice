@@ -213,7 +213,12 @@ private object PlanTestDatabase {
                         rows.next()
                         rows.getInt(1) > 0
                     }
-                if (!seeded) SEED.forEach { statement.execute(it) }
+                if (!seeded) {
+                    // A deliberate bulk load of 100k rows, not application traffic: lift the 5 s statement_timeout that
+                    // migration V4 sets on the role, for this session only (it ends with the connection).
+                    statement.execute("SET statement_timeout = 0")
+                    SEED.forEach { statement.execute(it) }
+                }
             }
         }
     }
