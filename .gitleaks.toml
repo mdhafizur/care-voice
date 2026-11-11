@@ -10,3 +10,7 @@ paths = [
   '''^\.env\.example$''',
   '''(^|/)src/test/''',
 ]
+# The example token in the OpenAPI spec: a fake JWT whose third part is the literal word "signature".
+regexes = [
+  '''eyJhbGciOiJIUzI1NiJ9\.eyJzdWIiOiJudXJzZS5hbm5hIn0\.signature''',
+]

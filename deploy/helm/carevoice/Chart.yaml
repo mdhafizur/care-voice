@@ -3,7 +3,7 @@ name: carevoice
 description: CareVoice backend (documentation-service and alert-service) for Kubernetes
 type: application
 # Chart version: bump on every change to the templates or default values.
-version: 0.1.0
+version: 0.1.1
 # Default image tag of both services (overridable per service with services.<svc>.image.tag).
 appVersion: "0.1.0"
 kubeVersion: ">=1.29.0-0"

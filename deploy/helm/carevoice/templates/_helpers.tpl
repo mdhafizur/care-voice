@@ -34,10 +34,12 @@ app.kubernetes.io/instance: {{ .root.Release.Name }}
 
 {{/*
 All labels of one service's resources. Call with (dict "root" $ "svc" $svc "component" "server").
+The common labels plus the service name: together they contain every selector label (name and instance), each once.
+Including selectorLabels here would repeat app.kubernetes.io/instance, a duplicate YAML key that strict parsers reject.
 */}}
 {{- define "carevoice.labels" -}}
 {{ include "carevoice.commonLabels" .root }}
-{{ include "carevoice.selectorLabels" . }}
+app.kubernetes.io/name: {{ .svc.name }}
 app.kubernetes.io/component: {{ .component | default "server" }}
 {{- end -}}
 
