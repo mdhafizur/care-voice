@@ -12,6 +12,7 @@ import io.ktor.http.takeFrom
 import io.ktor.server.application.ApplicationCall
 import io.ktor.server.request.contentType
 import io.ktor.server.request.header
+import io.ktor.server.request.path
 import io.ktor.server.request.receiveChannel
 import io.ktor.server.request.uri
 import io.ktor.server.response.header
@@ -75,7 +76,9 @@ fun versionEtag(version: Int): String = "\"$version\""
  */
 fun ApplicationCall.ifMatchVersion(): Int? {
     val raw = request.header(HttpHeaders.IfMatch)?.trim() ?: return null
-    return raw.removePrefix("W/").removeSurrounding("\"").toIntOrNull()?.takeIf { raw.startsWith("\"") } ?: -1
+    // Only a strong tag (`"3"`) can carry our version; a weak tag (`W/"3"`) or any other text never matches.
+    if (!raw.startsWith("\"")) return -1
+    return raw.removeSurrounding("\"").toIntOrNull() ?: -1
 }
 
 /** True when `If-None-Match` lists [etag] (or `*`); weak comparison, as RFC 9110 requires for GET. */
@@ -139,3 +142,9 @@ const val LAST_EVENT_ID_HEADER = "Last-Event-ID"
 /** Field-level 400 for a missing or malformed header. */
 fun headerError(name: String, message: String): Nothing =
     throw Problems.badRequest("The request has an invalid header.", listOf(FieldError(name, message)))
+
+/** The request path for a log line, cut to [MAX_LOGGED_PATH] characters: the path is user input. */
+internal fun ApplicationCall.loggedPath(): String = request.path().take(MAX_LOGGED_PATH)
+
+/** Longest part of the request path, in characters, that goes into a log line. */
+private const val MAX_LOGGED_PATH = 256

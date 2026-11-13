@@ -14,7 +14,7 @@ import com.carevoice.documentation.api.plugins.caller
 import com.carevoice.documentation.api.receiveJson
 import com.carevoice.documentation.api.respondJson
 import com.carevoice.documentation.api.respondJsonConditional
-import com.carevoice.documentation.api.toDto
+import com.carevoice.documentation.api.toListResponse
 import com.carevoice.documentation.api.toResponse
 import com.carevoice.documentation.application.SubmitTranscriptCommand
 import io.ktor.http.HttpHeaders
@@ -43,7 +43,7 @@ fun Route.residentRoutes(deps: Dependencies) {
         val key = idempotencyKey(call.request.header(IDEMPOTENCY_KEY_HEADER))
         // Step 3: read the JSON body: wrong Content-Type 415, too big 413, empty 400.
         val body = call.receiveJson(TranscriptRequest.serializer(), deps.http.maxBodyBytes)
-        // Step 4: run the use case. Its errors (404, 409, 422, 503) go up to the error plugin in Problems.kt,
+        // Step 4: run the use case. Its errors (404, 409, 422, 503) go up to the error plugin in ErrorMapping.kt,
         // so this route needs no try/catch.
         val outcome =
             deps.submitTranscript.execute(
@@ -73,7 +73,7 @@ fun Route.residentRoutes(deps: Dependencies) {
         call.paginationHeaders(result)
         call.respondJsonConditional(
             ObservationListResponse.serializer(),
-            ObservationListResponse(result.items.map { it.toDto() }, result.nextCursor),
+            result.toListResponse(),
         )
     }
 }
@@ -81,9 +81,14 @@ fun Route.residentRoutes(deps: Dependencies) {
 /** The key must be a UUID (docs/CONTRACTS.md, section 7); missing or malformed → 400. */
 private fun idempotencyKey(raw: String?): UUID {
     if (raw.isNullOrBlank()) headerError(IDEMPOTENCY_KEY_HEADER, "is required")
-    return try {
-        UUID.fromString(raw.trim()).takeIf { it.toString() == raw.trim().lowercase() }
-    } catch (_: IllegalArgumentException) {
-        null
-    } ?: headerError(IDEMPOTENCY_KEY_HEADER, "must be a UUID")
+    val text = raw.trim()
+    val key =
+        try {
+            UUID.fromString(text)
+        } catch (_: IllegalArgumentException) {
+            null
+        }
+    // UUID.fromString also accepts short forms such as "1-2-3-4-5"; only the full form (any letter case) is a key.
+    if (key == null || key.toString() != text.lowercase()) headerError(IDEMPOTENCY_KEY_HEADER, "must be a UUID")
+    return key
 }

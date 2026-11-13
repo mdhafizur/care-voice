@@ -301,6 +301,7 @@ class ServiceSystem private constructor(
                 }
 
             // Step 7: the use cases, each given the ports (interfaces) it needs.
+            val audit = PostgresAuditLog(database.primary)
             val dependencies =
                 Dependencies(
                     authenticateUser = AuthenticateUser(PostgresUserRepository(database.primary), hasher, jwtIssuer),
@@ -311,7 +312,7 @@ class ServiceSystem private constructor(
                         transcripts = transcripts,
                         observations = observations,
                         outbox = PostgresEventOutbox(clock),
-                        audit = PostgresAuditLog(database.primary),
+                        audit = audit,
                         transactions = transactions,
                         processor = processor,
                         broadcaster = broadcaster,
@@ -325,7 +326,7 @@ class ServiceSystem private constructor(
                     queryObservations = QueryObservations(readObservations, queryCache),
                     confirmObservation = ConfirmObservation(
                         observations,
-                        PostgresAuditLog(database.primary),
+                        audit,
                         transactions,
                         cacheBus,
                         clock,

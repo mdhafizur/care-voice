@@ -57,26 +57,14 @@ object TestDatabases {
     private val backend: String =
         (System.getProperty("CAREVOICE_TEST_DB") ?: System.getenv("CAREVOICE_TEST_DB") ?: "embedded").lowercase()
 
-    val postgres: PostgresInstance by lazy {
-        when (backend) {
-            "containers" -> ContainerPostgres()
-            else -> EmbeddedPostgresInstance()
-        }
-    }
+    /** True for `containers`; any other value means the embedded backend. */
+    private val useContainers: Boolean = backend == "containers"
 
-    val mongo: MongoInstance by lazy {
-        when (backend) {
-            "containers" -> ContainerMongo()
-            else -> EmbeddedMongoInstance()
-        }
-    }
+    val postgres: PostgresInstance by lazy { if (useContainers) ContainerPostgres() else EmbeddedPostgresInstance() }
 
-    val redis: RedisInstance by lazy {
-        when (backend) {
-            "containers" -> ContainerRedis()
-            else -> EmbeddedRedisInstance()
-        }
-    }
+    val mongo: MongoInstance by lazy { if (useContainers) ContainerMongo() else EmbeddedMongoInstance() }
+
+    val redis: RedisInstance by lazy { if (useContainers) ContainerRedis() else EmbeddedRedisInstance() }
 
     /**
      * RabbitMQ always runs in a container, in both modes: there is no embedded broker that behaves like RabbitMQ

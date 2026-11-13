@@ -1,14 +1,8 @@
 package com.carevoice.domain.extraction
 
-import arrow.core.Either
-import arrow.core.left
-import arrow.core.right
 import com.carevoice.domain.model.BloodPressure
-import com.carevoice.domain.model.Confidence
 import com.carevoice.domain.model.ExtractionSource
 import com.carevoice.domain.model.Pulse
-import com.carevoice.domain.model.ValidationError
-import com.carevoice.domain.model.VitalSign
 
 /*
  * Deterministic, regex-based extractors. They are fast, free, explainable and testable;
@@ -69,15 +63,6 @@ private const val NUMBER_START = """(?<!\d|\d[.,/])"""
 /** Guard 3: not continued by more digits, a decimal part or another slash. */
 private const val NUMBER_END = """(?!\d|[.,/]\d)"""
 
-/** Turns a validation result into a rule outcome: an error becomes a rejected candidate, a value an extracted vital. */
-private fun <V : VitalSign> Either<ValidationError, V>.toOutcome(
-    matchedText: String,
-    confidence: Double,
-): ExtractionOutcome = fold(
-    ifLeft = { RejectedCandidate(matchedText, it).left() },
-    ifRight = { ExtractedVital(it, Confidence(confidence), ExtractionSource.RULES, matchedText).right() },
-)
-
 /** "blood pressure 120/75", "bp: 135/85", or a bare "120/75" at lower confidence. */
 class BloodPressureExtractor : VitalExtractor {
     // The keyword group is optional so a bare pair is still found, just with lower confidence.
@@ -95,6 +80,7 @@ class BloodPressureExtractor : VitalExtractor {
                 .toOutcome(
                     matchedText = match.value.trim(),
                     confidence = if (hasKeyword) RuleConfidence.EXPLICIT else RuleConfidence.NO_KEYWORD,
+                    source = ExtractionSource.RULES,
                 )
         }.toList()
 }
@@ -108,7 +94,9 @@ class PulseExtractor : VitalExtractor {
     override fun extract(normalized: String): List<ExtractionOutcome> = pattern
         .findAll(normalized)
         .map { match ->
-            Pulse.of(match.groupValues[1].toInt()).toOutcome(match.value.trim(), RuleConfidence.EXPLICIT)
+            Pulse
+                .of(match.groupValues[1].toInt())
+                .toOutcome(match.value.trim(), RuleConfidence.EXPLICIT, ExtractionSource.RULES)
         }
         .toList()
 }
@@ -151,6 +139,6 @@ class TemperatureExtractor : VitalExtractor {
 
                     else -> RuleConfidence.CELSIUS_ASSUMED
                 }
-            unit.measure(value).toOutcome(match.value.trim(), confidence)
+            unit.measure(value).toOutcome(match.value.trim(), confidence, ExtractionSource.RULES)
         }.toList()
 }

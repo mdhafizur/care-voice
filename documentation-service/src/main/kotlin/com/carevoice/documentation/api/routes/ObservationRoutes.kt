@@ -12,6 +12,7 @@ import com.carevoice.documentation.api.receiveJson
 import com.carevoice.documentation.api.respondJson
 import com.carevoice.documentation.api.respondJsonConditional
 import com.carevoice.documentation.api.toDto
+import com.carevoice.documentation.api.toListResponse
 import com.carevoice.documentation.api.toQuery
 import com.carevoice.documentation.api.toResponse
 import com.carevoice.documentation.api.versionEtag
@@ -72,6 +73,6 @@ private suspend fun RoutingContext.queryObservations(deps: Dependencies) {
     // Step 3: answer with an ETag; a client that still has this page gets 304 without a body.
     call.respondJsonConditional(
         ObservationListResponse.serializer(),
-        ObservationListResponse(result.items.map { it.toDto() }, result.nextCursor),
+        result.toListResponse(),
     )
 }

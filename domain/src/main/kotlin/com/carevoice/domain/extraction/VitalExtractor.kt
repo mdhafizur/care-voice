@@ -1,6 +1,8 @@
 package com.carevoice.domain.extraction
 
 import arrow.core.Either
+import arrow.core.left
+import arrow.core.right
 import com.carevoice.domain.model.Confidence
 import com.carevoice.domain.model.ExtractionSource
 import com.carevoice.domain.model.ValidationError
@@ -18,6 +20,19 @@ data class ExtractedVital(
 data class RejectedCandidate(val matchedText: String, val error: ValidationError)
 
 typealias ExtractionOutcome = Either<RejectedCandidate, ExtractedVital>
+
+/**
+ * Turns a validation result into an outcome: an error becomes a rejected candidate, a value an extracted vital.
+ * Shared by the rule extractors and the AI validation, so both build their results in exactly the same way.
+ */
+internal fun <V : VitalSign> Either<ValidationError, V>.toOutcome(
+    matchedText: String,
+    confidence: Double,
+    source: ExtractionSource,
+): ExtractionOutcome = fold(
+    ifLeft = { RejectedCandidate(matchedText, it).left() },
+    ifRight = { ExtractedVital(it, Confidence(confidence), source, matchedText).right() },
+)
 
 /**
  * Strategy pattern: one implementation per vital type. Adding SpO2 means adding one class

@@ -48,11 +48,11 @@ class OpenApiContract(specResource: String) {
         body: String,
         contentType: String = "application/json",
     ): List<String> =
-        validate("/paths/${escape(path)}/${method.lowercase()}/requestBody/content/${escape(contentType)}/schema", body)
+        validate("${operationPointer(path, method)}/requestBody/content/${escape(contentType)}/schema", body)
 
     /** True when the spec documents [status] for the operation; every status a handler emits must be documented. */
     fun documentsStatus(path: String, method: String, status: Int): Boolean =
-        !spec.at("/paths/${escape(path)}/${method.lowercase()}/responses/$status").isMissingNode
+        !spec.at("${operationPointer(path, method)}/responses/$status").isMissingNode
 
     /** Fails the test when the spec does not document [status] or the body does not match its response schema. */
     fun assertResponseMatches(
@@ -86,10 +86,13 @@ class OpenApiContract(specResource: String) {
      * `$ref: '#/components/responses/BadRequest'`, so a response-level reference is followed.
      */
     private fun responsePointer(path: String, method: String, status: Int): String {
-        val inline = "/paths/${escape(path)}/${method.lowercase()}/responses/$status"
+        val inline = "${operationPointer(path, method)}/responses/$status"
         val ref = spec.at(inline).get("\$ref")?.asText()
         return if (ref != null && ref.startsWith("#")) ref.removePrefix("#") else inline
     }
+
+    /** JSON pointer to one operation in the spec, e.g. "/paths/~1v1~1alerts/get" for GET /v1/alerts. */
+    private fun operationPointer(path: String, method: String): String = "/paths/${escape(path)}/${method.lowercase()}"
 
     /** Escapes one JSON pointer segment ("~" -> "~0", "/" -> "~1"), so "/v1/alerts" stays one segment. */
     private fun escape(segment: String) = segment.replace("~", "~0").replace("/", "~1")

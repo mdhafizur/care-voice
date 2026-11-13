@@ -6,9 +6,7 @@ import arrow.core.left
 import arrow.core.raise.either
 import arrow.core.raise.ensure
 import arrow.core.raise.ensureNotNull
-import arrow.core.right
 import com.carevoice.domain.model.BloodPressure
-import com.carevoice.domain.model.Confidence
 import com.carevoice.domain.model.ExtractionSource
 import com.carevoice.domain.model.InconsistentValues
 import com.carevoice.domain.model.Pulse
@@ -68,11 +66,7 @@ internal fun RawVitalCandidate.validate(): ExtractionOutcome {
                 TemperatureUnit.parse(unit)?.measure(value)
                     ?: InconsistentValues("temperature unit '$unit' is not supported").left()
         }
-    val description = describe()
-    return validated.fold(
-        ifLeft = { RejectedCandidate(description, it).left() },
-        ifRight = { ExtractedVital(it, Confidence(AI_CONFIDENCE), ExtractionSource.AI, description).right() },
-    )
+    return validated.toOutcome(matchedText = describe(), confidence = AI_CONFIDENCE, source = ExtractionSource.AI)
 }
 
 /** Needs both values as whole numbers, then runs the normal blood pressure range checks. */

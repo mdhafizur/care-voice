@@ -6,7 +6,6 @@ import arrow.core.raise.ensure
 import com.carevoice.domain.extraction.AiVitalExtractor
 import com.carevoice.domain.extraction.CompositeExtractor
 import com.carevoice.domain.extraction.ExtractedVital
-import com.carevoice.domain.extraction.ExtractionOutcome
 import com.carevoice.domain.extraction.RejectedCandidate
 import com.carevoice.domain.extraction.TranscriptNormalizer
 import com.carevoice.domain.extraction.VitalExtractor

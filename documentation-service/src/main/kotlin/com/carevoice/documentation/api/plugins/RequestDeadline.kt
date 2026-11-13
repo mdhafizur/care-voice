@@ -1,5 +1,6 @@
 package com.carevoice.documentation.api.plugins
 
+import com.carevoice.documentation.api.loggedPath
 import com.carevoice.documentation.application.ApplicationError
 import com.carevoice.documentation.resilience.LogType
 import com.carevoice.documentation.resilience.event
@@ -45,7 +46,7 @@ fun Application.installRequestDeadline(timeout: Duration, exemptPaths: Set<Strin
                 LogType.REQUEST,
                 "Request deadline exceeded",
                 "method" to call.request.httpMethod.value,
-                "path" to path.take(MAX_LOGGED_PATH),
+                "path" to call.loggedPath(),
                 "timeoutMs" to timeout.inWholeMilliseconds,
             )
             throw ApplicationError.ServiceUnavailable(
@@ -55,6 +56,3 @@ fun Application.installRequestDeadline(timeout: Duration, exemptPaths: Set<Strin
         }
     }
 }
-
-/** Longest part of the request path, in characters, that goes into the log: the path is user input. */
-private const val MAX_LOGGED_PATH = 256

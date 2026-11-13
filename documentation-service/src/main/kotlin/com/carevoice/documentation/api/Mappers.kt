@@ -4,6 +4,7 @@ import com.carevoice.documentation.application.ApplicationError
 import com.carevoice.documentation.application.FieldError
 import com.carevoice.documentation.application.ObservationFilter
 import com.carevoice.documentation.application.ObservationRecord
+import com.carevoice.documentation.application.Page
 import com.carevoice.documentation.application.PageCursor
 import com.carevoice.documentation.application.PageLimits
 import com.carevoice.documentation.application.PageRequest
@@ -53,6 +54,10 @@ fun TranscriptResult.toResponse(): TranscriptResponse = TranscriptResponse(
     usedAiFallback = usedAiFallback,
 )
 
+/** One page of observations as a list body; the next page's cursor travels in the body (`nextCursor`). */
+fun Page<ObservationRecord>.toListResponse(): ObservationListResponse =
+    ObservationListResponse(items.map { it.toDto() }, nextCursor)
+
 /** Copies a validation error into its JSON form. */
 fun FieldError.toDto(): FieldErrorDto = FieldErrorDto(field, message)
 
@@ -62,14 +67,13 @@ fun pageRequestOf(limit: String?, cursor: String?): PageRequest {
     val errors = mutableListOf<FieldError>()
     // Step 2: no limit means the default. A limit that is not a number in range is an error.
     val parsedLimit =
-        when {
-            limit == null -> PageLimits.DEFAULT
-
-            else ->
-                limit.toIntOrNull()?.takeIf { it in PageLimits.MIN..PageLimits.MAX } ?: run {
-                    errors += FieldError("limit", "must be an integer between ${PageLimits.MIN} and ${PageLimits.MAX}")
-                    PageLimits.DEFAULT
-                }
+        if (limit == null) {
+            PageLimits.DEFAULT
+        } else {
+            limit.toIntOrNull()?.takeIf { it in PageLimits.MIN..PageLimits.MAX } ?: run {
+                errors += FieldError("limit", "must be an integer between ${PageLimits.MIN} and ${PageLimits.MAX}")
+                PageLimits.DEFAULT
+            }
         }
     // Step 3: decode the cursor (a token that marks where the last page ended).
     val parsedCursor =
@@ -109,14 +113,11 @@ fun ObservationFilterRequest.toQuery(): Pair<ObservationFilter, PageRequest> {
         }
     // Step 3: check the resident ids: not too many, and each one well formed.
     val residents = residentIds.orEmpty()
-    if (residents.size >
-        MAX_FILTER_VALUES
-    ) {
+    if (residents.size > MAX_FILTER_VALUES) {
         errors += FieldError("residentIds", "must contain at most $MAX_FILTER_VALUES ids")
     }
     if (residents.any { !RESIDENT_ID.matches(it) }) {
-        errors +=
-            FieldError("residentIds", "contains a malformed resident id")
+        errors += FieldError("residentIds", "contains a malformed resident id")
     }
     // Step 4: parse the time range and the paging values. Paging errors join the same list.
     val from = instantOrError("recordedFrom", recordedFrom, errors)

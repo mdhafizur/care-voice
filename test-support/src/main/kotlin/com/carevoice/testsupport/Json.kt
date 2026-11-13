@@ -37,8 +37,7 @@ private fun compare(expected: JsonElement, actual: JsonElement, path: String, di
     when {
         expected is JsonPrimitive && expected.isString && expected.content.startsWith("<any-") ->
             if (!matchesPlaceholder(expected.content, actual)) {
-                differences +=
-                    "$path: expected ${expected.content}, was $actual"
+                differences += "$path: expected ${expected.content}, was $actual"
             }
 
         expected is JsonObject && actual is JsonObject -> {
@@ -50,9 +49,7 @@ private fun compare(expected: JsonElement, actual: JsonElement, path: String, di
         }
 
         expected is JsonArray && actual is JsonArray -> {
-            if (expected.size !=
-                actual.size
-            ) {
+            if (expected.size != actual.size) {
                 differences += "$path: expected ${expected.size} elements, was ${actual.size}"
             }
             expected.zip(actual).forEachIndexed { i, (e, a) -> compare(e, a, "$path[$i]", differences) }
@@ -74,7 +71,10 @@ private fun matchesPlaceholder(placeholder: String, actual: JsonElement): Boolea
     }
 }
 
-/** Replaces the value of [field] in a JSON object literal, or removes it for [InvalidJson.ABSENT]. Used to build negative bodies. */
+/**
+ * Replaces the value of [field] in a JSON object literal, or removes it for [InvalidJson.ABSENT].
+ * Used to build negative bodies.
+ */
 fun withField(jsonObject: String, field: String, rawJsonValue: String): String {
     val parsed = Json.parseToJsonElement(jsonObject) as JsonObject
     val updated =
