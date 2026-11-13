@@ -17,15 +17,24 @@ import kotlin.random.Random
 import kotlin.time.Duration.Companion.milliseconds
 import kotlin.time.Duration.Companion.seconds
 
+/** The connection of the transaction this coroutine runs in, or null when it runs outside one. */
+internal suspend fun currentTransactionConnection(): Connection? =
+    currentCoroutineContext()[TransactionConnection]?.connection
+
+/**
+ * Runs [block] on [Dispatchers.IO] (JDBC blocks its thread) with the caller's log context ([MDCContext]), and turns an
+ * unreachable database into a 503 ([unavailableAs503]). Every JDBC call in this package goes through here.
+ */
+internal suspend fun <T> onDatabaseThread(block: suspend () -> T): T =
+    withContext(Dispatchers.IO + MDCContext()) { unavailableAs503 { block() } }
+
 /**
  * Uses the ambient transaction's connection when there is one, otherwise borrows one from [dataSource] for a single
  * auto-commit operation. Always on [Dispatchers.IO] with the caller's MDC.
  */
 internal suspend fun <T> withConnection(dataSource: DataSource, block: (Connection) -> T): T {
-    val ambient = currentCoroutineContext()[TransactionConnection]?.connection
-    return withContext(Dispatchers.IO + MDCContext()) {
-        unavailableAs503 { if (ambient != null) block(ambient) else dataSource.connection.use(block) }
-    }
+    val ambient = currentTransactionConnection()
+    return onDatabaseThread { if (ambient != null) block(ambient) else dataSource.connection.use(block) }
 }
 
 private val readRetryLog = LoggerFactory.getLogger("com.carevoice.documentation.infrastructure.persistence.ReadRetry")
@@ -45,27 +54,25 @@ private val readRetryLog = LoggerFactory.getLogger("com.carevoice.documentation.
  */
 internal suspend fun <T> withReadConnection(dataSource: DataSource, block: (Connection) -> T): T {
     // Step 1: inside a transaction, use its connection and never retry (see above).
-    if (currentCoroutineContext()[TransactionConnection] != null) return withConnection(dataSource, block)
+    if (currentTransactionConnection() != null) return withConnection(dataSource, block)
     // Step 2: outside one, read on the IO threads; a database that cannot be reached becomes a 503.
-    return withContext(Dispatchers.IO + MDCContext()) {
-        unavailableAs503 {
-            try {
-                // Step 3: try the read on a connection from the pool.
-                dataSource.connection.use(block)
-            } catch (e: SQLException) {
-                // Step 4: retry only a lost connection: log it, wait a short random pause, then read once more
-                // on a new connection.
-                if (!SqlStates.isConnectionLost(e)) throw e
-                readRetryLog.event(
-                    Level.WARN,
-                    LogType.DB_OPERATION,
-                    "Read failed on a lost connection; retrying once",
-                    "sqlState" to SqlStates.firstSqlState(e),
-                    "error" to e.javaClass.simpleName,
-                )
-                delay(Random.nextLong(READ_RETRY_MIN_MS, READ_RETRY_MAX_MS).milliseconds)
-                dataSource.connection.use(block)
-            }
+    return onDatabaseThread {
+        try {
+            // Step 3: try the read on a connection from the pool.
+            dataSource.connection.use(block)
+        } catch (e: SQLException) {
+            // Step 4: retry only a lost connection: log it, wait a short random pause, then read once more
+            // on a new connection.
+            if (!SqlStates.isConnectionLost(e)) throw e
+            readRetryLog.event(
+                Level.WARN,
+                LogType.DB_OPERATION,
+                "Read failed on a lost connection; retrying once",
+                "sqlState" to SqlStates.firstSqlState(e),
+                "error" to e.javaClass.simpleName,
+            )
+            delay(Random.nextLong(READ_RETRY_MIN_MS, READ_RETRY_MAX_MS).milliseconds)
+            dataSource.connection.use(block)
         }
     }
 }

@@ -2,7 +2,6 @@ package com.carevoice.documentation.infrastructure.persistence
 
 import com.carevoice.documentation.application.TransactionRunner
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.slf4j.MDCContext
 import kotlinx.coroutines.withContext
 import java.sql.Connection
@@ -33,26 +32,24 @@ class JdbcTransactions(private val dataSource: DataSource) : TransactionRunner {
     override suspend fun <T> inTransaction(block: suspend () -> T): T {
         // Step 1: are we already inside a transaction?
         // Nested call: join the outer transaction instead of opening a second connection.
-        if (currentCoroutineContext()[TransactionConnection] != null) return block()
+        if (currentTransactionConnection() != null) return block()
         // Step 2: otherwise run on the IO threads with the log context (MDC); a lost database becomes a 503.
-        return withContext(Dispatchers.IO + MDCContext()) {
-            unavailableAs503 {
-                dataSource.connection.use { connection ->
-                    // Step 3: turn off auto-commit, so every statement in the block is part of one transaction.
-                    connection.autoCommit = false
-                    try {
-                        // Step 4: run the block with this connection in the coroutine context; commit on success.
-                        val result = withContext(TransactionConnection(connection)) { block() }
-                        connection.commit()
-                        result
-                    } catch (e: Throwable) {
-                        // Step 5: on any error, roll back and rethrow; a failed rollback is added to that error.
-                        runCatching { connection.rollback() }.onFailure { e.addSuppressed(it) }
-                        throw e
-                    } finally {
-                        // Step 6: give the connection back to the pool in its normal auto-commit mode.
-                        runCatching { connection.autoCommit = true }
-                    }
+        return onDatabaseThread {
+            dataSource.connection.use { connection ->
+                // Step 3: turn off auto-commit, so every statement in the block is part of one transaction.
+                connection.autoCommit = false
+                try {
+                    // Step 4: run the block with this connection in the coroutine context; commit on success.
+                    val result = withContext(TransactionConnection(connection)) { block() }
+                    connection.commit()
+                    result
+                } catch (e: Throwable) {
+                    // Step 5: on any error, roll back and rethrow; a failed rollback is added to that error.
+                    runCatching { connection.rollback() }.onFailure { e.addSuppressed(it) }
+                    throw e
+                } finally {
+                    // Step 6: give the connection back to the pool in its normal auto-commit mode.
+                    runCatching { connection.autoCommit = true }
                 }
             }
         }
@@ -69,7 +66,6 @@ class JdbcTransactions(private val dataSource: DataSource) : TransactionRunner {
     companion object {
         /** The connection of the current coroutine's transaction; throws when the caller is not in a transaction. */
         internal suspend fun currentConnection(): Connection =
-            currentCoroutineContext()[TransactionConnection]?.connection
-                ?: error("No transaction in the current coroutine context")
+            currentTransactionConnection() ?: error("No transaction in the current coroutine context")
     }
 }
