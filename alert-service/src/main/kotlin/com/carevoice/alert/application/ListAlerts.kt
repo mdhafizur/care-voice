@@ -32,13 +32,17 @@ class ListAlerts(private val alerts: AlertRepository) {
      * or whose time does not match, starts again at the first page.
      */
     suspend fun execute(scope: WardScope, status: AlertStatus?, limit: Int, cursor: String?): AlertPage {
+        // Step 1: the page size must be in the allowed range.
         require(limit in MIN_LIMIT..MAX_LIMIT) { "limit must be in $MIN_LIMIT..$MAX_LIMIT" }
+        // Step 2: read the cursor and check that it still points to an alert of this ward.
         // Decode first: a malformed cursor is a 400 even when the ward has no alerts.
         var keyset = cursor?.let { CursorCodec.decode(it) }
         // Well-formed but unknown (e.g. the alert belongs to another ward or never existed) → first page.
         val cursorSent = keyset != null
         if (keyset != null && alerts.findById(scope, keyset.id)?.createdAt != keyset.createdAt) keyset = null
 
+        // Step 3: count all matching alerts, then fetch the page in the direction the cursor asks for
+        // (no cursor means the first page).
         val total = alerts.count(scope, status)
         val page =
             when (keyset?.direction) {
@@ -46,6 +50,7 @@ class ListAlerts(private val alerts: AlertRepository) {
                 Keyset.Direction.OLDER -> olderPage(scope, status, keyset, limit, total)
                 Keyset.Direction.NEWER -> newerPage(scope, status, keyset, limit, total)
             }
+        // Step 4: one DEBUG log line with the filter and the result size, then return the page.
         log.event(
             Level.DEBUG,
             LogType.DB_OPERATION,

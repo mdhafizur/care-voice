@@ -28,11 +28,14 @@ import java.util.UUID
 
 /** Resident-scoped endpoints (docs/CONTRACTS.md, section 7). Must be mounted inside `authenticate(JWT_AUTH)`. */
 fun Route.residentRoutes(deps: Dependencies) {
+    // Read one resident.
     get("/v1/residents/{residentId}") {
         val resident = deps.getResident.execute(call.caller(), call.parameters["residentId"].orEmpty())
         call.respondJsonConditional(ResidentResponse.serializer(), resident.toResponse())
     }
 
+    // Submit a note. A retry with the same idempotency key answers 200 with a "replayed" header;
+    // a new note answers 201.
     post("/v1/residents/{residentId}/transcripts") {
         val caller = call.caller()
         val key = idempotencyKey(call.request.header(IDEMPOTENCY_KEY_HEADER))
@@ -52,6 +55,7 @@ fun Route.residentRoutes(deps: Dependencies) {
         }
     }
 
+    // A resident's observations, one page at a time.
     get("/v1/residents/{residentId}/observations") {
         val page = pageRequestOf(call.request.queryParameters["limit"], call.request.queryParameters["cursor"])
         val result = deps.listResidentObservations.execute(call.caller(), call.parameters["residentId"].orEmpty(), page)

@@ -46,6 +46,7 @@ class Database private constructor(
          * The replica pool may start while the replica is unreachable; reads then use the primary.
          */
         fun create(config: DatabaseConfig, readConfig: ReadDatabaseConfig?, meterRegistry: MeterRegistry?): Database {
+            // Connection pool (a set of reusable connections) for the primary database, which takes all writes.
             val primary =
                 HikariDataSource(
                     hikariConfig(
@@ -59,6 +60,7 @@ class Database private constructor(
                     )
                         .apply { meterRegistry?.let { metricRegistry = it } },
                 )
+            // Optional read-only pool for the read replica (a read-only copy of the database).
             val replica =
                 readConfig?.let {
                     HikariDataSource(
@@ -164,10 +166,12 @@ internal class FallbackDataSource(
         preferredConnection: () -> java.sql.Connection,
         fallbackConnection: () -> java.sql.Connection,
     ): java.sql.Connection {
+        // Step 1: try the preferred connection first.
         val connection =
             try {
                 preferredConnection()
             } catch (e: SQLException) {
+                // Step 2: if that fails, count and log it, then use the fallback connection instead.
                 fallbacks?.increment()
                 if (fallingBack.compareAndSet(false, true)) {
                     log.event(
@@ -188,6 +192,8 @@ internal class FallbackDataSource(
                 }
                 return fallbackConnection()
             }
+        // Step 3: the preferred connection works again after an outage:
+        // log once that it is back.
         if (fallingBack.compareAndSet(true, false)) {
             log.event(Level.INFO, LogType.DB_OPERATION, "Read replica available again; reads use the replica")
         }

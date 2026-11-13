@@ -100,6 +100,7 @@ class AlertServiceClient(
 
     /** Sends the HTTP POST with the token, idempotency key and correlation headers; transport errors are Retryable. */
     private suspend fun send(event: OutboxEvent, token: String): PublishResult = try {
+        // Step 1: POST the event with a time limit, the service token and the tracking headers.
         val mark = TimeSource.Monotonic.markNow()
         val response =
             httpClient.post(endpoint) {
@@ -118,6 +119,7 @@ class AlertServiceClient(
                 // serialised once, with ContractJson, when the observation was committed.
                 setBody(TextContent(event.payload, ContentType.Application.Json))
             }
+        // Step 2: log the status and how long the call took.
         log.event(
             Level.DEBUG,
             LogType.EXTERNAL_REQUEST,
@@ -127,6 +129,7 @@ class AlertServiceClient(
             "httpStatus" to response.status.value,
             "durationMs" to mark.elapsedNow().inWholeMilliseconds,
         )
+        // Step 3: turn the HTTP status into a result: published, retry later, or do not retry.
         classify(response.status, response.headers[HttpHeaders.RetryAfter])
     } catch (e: CancellationException) {
         throw e

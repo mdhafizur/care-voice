@@ -88,6 +88,7 @@ suspend fun ApplicationCall.respondProblem(
     detail: String,
     violations: List<FieldViolation> = emptyList(),
 ) {
+    // Step 1: build the problem body from the arguments and the current request (path and request id).
     val problem =
         Problem(
             type = PROBLEM_BASE + slug,
@@ -98,7 +99,9 @@ suspend fun ApplicationCall.respondProblem(
             requestId = callId ?: "unknown",
             errors = violations.takeIf { it.isNotEmpty() }?.map { FieldErrorDto(it.field, it.message) },
         )
+    // Step 2: mark the call as answered, so the 404 and 429 status handlers below do not write a second body.
     attributes.put(ProblemWritten, Unit)
+    // Step 3: send the body as JSON with the problem content type and the given status.
     respondText(problemJson.encodeToString(Problem.serializer(), problem), ProblemContentType, status)
 }
 
@@ -109,6 +112,7 @@ suspend fun ApplicationCall.respondProblem(
  */
 fun Application.installStatusPages() {
     install(StatusPages) {
+        // Exceptions: each kind of error is turned into its problem response.
         exception<AlertServiceException> { call, cause -> call.respondServiceError(cause) }
         exception<ApiException> { call, cause -> call.respondApiError(cause) }
         exception<UnsupportedMediaTypeException> { call, _ ->
@@ -129,6 +133,7 @@ fun Application.installStatusPages() {
                 UNEXPECTED_ERROR,
             )
         }
+        // Bare status codes: give a problem body to a 429 or 404 that no handler has answered yet.
         status(HttpStatusCode.TooManyRequests) { call, status ->
             if (call.attributes.contains(ProblemWritten)) return@status
             if (call.response.headers[HttpHeaders.RetryAfter] == null) {

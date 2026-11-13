@@ -65,15 +65,19 @@ class MongoMigrationRunner(
 
     /** Applies every pending migration in order. Returns the versions applied by THIS call. */
     suspend fun migrate(): List<Int> {
+        // Step 1: a unique index on the version, so the same migration can never be recorded twice.
         history.createIndex(
             Indexes.ascending(VERSION),
             IndexOptions().name("ux_schema_migrations_version").unique(true),
         )
+        // Step 2: take the lock, so only one instance changes the schema at a time.
         acquireLock()
         try {
+            // Step 3: read what is already applied, refuse to go on when it does not fit this code, and find the rest.
             val applied = appliedMigrations()
             verifyCompatible(applied)
             val pending = migrations.filter { it.version !in applied }
+            // Step 4: apply each pending migration in order, record it, and renew the lock so it does not expire.
             for (migration in pending) {
                 log.event(
                     Level.INFO,
@@ -86,6 +90,7 @@ class MongoMigrationRunner(
                 record(migration)
                 renewLock()
             }
+            // Step 5: say when nothing was pending, then return the applied versions. The lock is released in finally.
             if (pending.isEmpty()) {
                 log.event(
                     Level.INFO,

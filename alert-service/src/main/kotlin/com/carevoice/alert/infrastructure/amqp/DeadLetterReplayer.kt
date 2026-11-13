@@ -32,13 +32,18 @@ class DeadLetterReplayer(private val connectionFactory: ConnectionFactory) {
     fun replay(limit: Int = Int.MAX_VALUE): Result {
         require(limit >= 1) { "limit must be >= 1 but was $limit" }
         connectionFactory.newConnection("alert-service-dlq-replay").use { connection ->
+            // Step 1: open a channel (a light session inside the connection).
             val channel = connection.createChannel()
             // Makes sure the binding that routes RETRY_ROUTING_KEY to the queue exists before anything is moved.
             AmqpTopology.declare(channel)
+            // Step 2: turn on publisher confirms, so RabbitMQ tells us when each message is safely stored.
             channel.confirmSelect()
+            // Step 3: move at most `limit` messages, and no more than were waiting at the start. So a message that
+            // fails again and comes back is not replayed in an endless loop.
             val budget = minOf(limit, channel.queueDeclarePassive(AmqpTopology.DEAD_LETTER_QUEUE).messageCount)
             var replayed = 0
             while (replayed < budget) {
+                // Step 4: take one message and publish it again to the events exchange with the retry routing key.
                 val message = channel.basicGet(AmqpTopology.DEAD_LETTER_QUEUE, false) ?: break
                 val headers = message.props.headers.orEmpty()
                 val properties = message.props.builder().headers(replayHeaders(headers)).build()
@@ -49,6 +54,8 @@ class DeadLetterReplayer(private val connectionFactory: ConnectionFactory) {
                     properties,
                     message.body,
                 )
+                // Step 5: wait for the confirm, and only then ack (delete) the original. So a crash can repeat
+                // a message, but never lose one.
                 channel.waitForConfirmsOrDie(CONFIRM_TIMEOUT_MS)
                 channel.basicAck(message.envelope.deliveryTag, false)
                 replayed++
@@ -60,6 +67,7 @@ class DeadLetterReplayer(private val connectionFactory: ConnectionFactory) {
                     "reason" to headers[ObservationEventConsumer.HEADER_DEAD_LETTER_REASON]?.toString()?.take(200),
                 )
             }
+            // Step 6: report how many messages were moved and how many are still waiting.
             val remaining = channel.queueDeclarePassive(AmqpTopology.DEAD_LETTER_QUEUE).messageCount
             log.event(
                 Level.INFO,

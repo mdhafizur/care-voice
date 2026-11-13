@@ -59,11 +59,16 @@ class TranscriptRetentionJob(
 
     /** One run; returns the number of erased texts, or null when another instance holds the lock. */
     suspend fun runOnce(): Int? {
+        // Step 1: transcripts created before this time lose their text.
         val cutoff = clock.instant().minus(retention.toJavaDuration())
+        // Step 2: take an advisory lock (a named database lock only one holder can have), so only
+        // one instance runs the job at a time.
         val erased =
             transactions.tryWithAdvisoryLock(LOCK_NAME) {
                 var total = 0
                 var batches = 0
+                // Step 3: erase in batches until a batch comes back short or the per-run cap is reached.
+                // The rest waits for the next run.
                 do {
                     val count = transcripts.eraseTextCreatedBefore(cutoff, batchSize)
                     total += count
@@ -88,6 +93,7 @@ class TranscriptRetentionJob(
                 }
                 total
             }
+        // Step 4: log the result. null means another instance held the lock, so nothing was done.
         if (erased == null) {
             log.event(
                 Level.DEBUG,

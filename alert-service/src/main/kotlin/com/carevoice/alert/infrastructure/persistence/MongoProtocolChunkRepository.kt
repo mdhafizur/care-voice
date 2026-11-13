@@ -53,6 +53,7 @@ class MongoProtocolChunkRepository(database: MongoDatabase) : ProtocolChunkRepos
      */
     override suspend fun replaceCorpus(model: String, version: String, chunks: List<EmbeddedChunk>) {
         MongoErrors.translate {
+            // Step 1: write the new chunks (pieces of protocol text with their embeddings).
             if (chunks.isNotEmpty()) {
                 // Upserts by deterministic id: two pods ingesting the same corpus at once write identical documents.
                 this.chunks.bulkWrite(
@@ -66,12 +67,14 @@ class MongoProtocolChunkRepository(database: MongoDatabase) : ProtocolChunkRepos
                     },
                 )
             }
+            // Step 2: delete the chunks of older versions for this model.
             this.chunks.deleteMany(
                 Filters.and(
                     Filters.eq(ProtocolChunkFields.MODEL, model),
                     Filters.ne(ProtocolChunkFields.VERSION, version),
                 ),
             )
+            // Step 3: store the current version and the chunk count for this model.
             corpora.replaceOne(
                 Filters.eq(ProtocolChunkFields.ID, model),
                 Document(ProtocolChunkFields.ID, model)

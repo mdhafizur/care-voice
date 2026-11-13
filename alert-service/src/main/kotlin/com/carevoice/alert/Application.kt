@@ -106,8 +106,10 @@ class Dependencies(
  * the AMQP consumer after its in-flight messages, and only then does the engine drain in-flight HTTP requests.
  */
 fun Application.module(deps: Dependencies) {
+    // Step 1: install the HTTP plugins (request ids, login check, rate limit, metrics) and the request time limit.
     installHttpPlugins(deps.jwt, deps.rateLimitPerMinute, deps.meterRegistry)
     installRequestDeadline(deps.requestTimeout)
+    // Step 2: build the API from its use cases and serve its routes.
     val api =
         AlertApi(
             processObservationEvent = deps.processObservationEvent,
@@ -121,6 +123,8 @@ fun Application.module(deps: Dependencies) {
         )
     routing { alertServiceRoutes(api) }
 
+    // Step 3: on shutdown, first report not ready and wait a moment, so new traffic goes to other pods.
+    // Only then drain the work in progress. The flag makes sure this runs only once.
     val stopping = AtomicBoolean(false)
     monitor.subscribe(ApplicationStopPreparing) {
         if (stopping.compareAndSet(false, true)) {
@@ -205,17 +209,20 @@ private fun runMigrations(config: AppConfig): Int {
  * A shutdown hook stops the server, then the consumer, the guidance HTTP client and the Mongo client.
  */
 private fun serve(config: AppConfig) {
+    // Step 1: create the metrics registry and connect to MongoDB.
     log.info("Starting alert-service with {}", config)
     val registry = PrometheusMeterRegistry(PrometheusConfig.DEFAULT)
     val mongoClient = MongoClientFactory.create(config.mongo, registry)
     val database = mongoClient.getDatabase(config.mongo.database)
 
+    // Step 2: apply the database migrations, or only check them, depending on the config.
     // Fail fast before accepting traffic: a schema the code does not match must stop the pod, not corrupt data.
     runBlocking {
         val runner = MongoMigrationRunner(database)
         if (config.mongo.migrateOnStartup) runner.migrate() else runner.validate()
     }
 
+    // Step 3: build the use case that turns observation events into alerts.
     val clock = Clock.systemUTC()
     val alerts = MongoAlertRepository(database)
     val processedEvents = MongoProcessedEventRepository(database)
@@ -228,18 +235,22 @@ private fun serve(config: AppConfig) {
             ids = IdGenerator.RANDOM_UUID,
             metrics = MicrometerAlertMetrics(registry),
         )
+    // Step 4: set up care guidance. The embedder turns text into vectors (lists of numbers) for similarity
+    // search. The protocol texts are loaded into the knowledge base, and the optional writer drafts the guidance.
     val guidanceHttpClient = GuidanceHttpClient.create()
     val embedder = GuidanceHttpClient.embedder(config.guidance, guidanceHttpClient, registry)
     val protocolChunks = MongoProtocolChunkRepository(database)
     runBlocking { ingestProtocols(embedder, protocolChunks) }
     val guidanceWriter = GuidanceHttpClient.writer(config.guidance, guidanceHttpClient, registry)
 
+    // Step 5: create the consumer that reads observation events from RabbitMQ.
     val consumerScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
     val mongoHealth = MongoHealthCheck(database)
     // Pauses consumption while Mongo is down, so a long outage leaves the events waiting in the queue.
     val consumer =
         ObservationEventConsumer(config.rabbitmq, processObservationEvent, registry, pauseWhileDown = mongoHealth)
 
+    // Step 6: collect everything the HTTP module needs.
     val deps =
         Dependencies(
             jwt = JwtSettings(config.jwt.secret, config.jwt.issuer, config.jwt.audience),
@@ -259,12 +270,14 @@ private fun serve(config: AppConfig) {
             beforeDrain = { consumer.stop(CONSUMER_STOP_TIMEOUT) },
         )
 
+    // Step 7: create the HTTP server and start reading events.
     val server =
         embeddedServer(Netty, port = config.httpPort) {
             module(deps)
         }
     consumer.start(consumerScope)
 
+    // Step 8: on JVM exit, stop the server with a grace period, then close the consumer scope and the clients.
     Runtime.getRuntime().addShutdownHook(
         Thread({
             server.stop(GRACE_PERIOD.inWholeMilliseconds, DRAIN_TIMEOUT.inWholeMilliseconds)
@@ -274,6 +287,7 @@ private fun serve(config: AppConfig) {
             log.info("alert-service stopped")
         }, "alert-service-shutdown"),
     )
+    // Step 9: start the server and block here until it stops.
     server.start(wait = true)
 }
 

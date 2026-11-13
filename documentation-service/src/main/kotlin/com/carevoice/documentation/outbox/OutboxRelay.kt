@@ -120,11 +120,14 @@ class OutboxRelay(
      * Starts the relay as a child of [scope] and returns its job. Call once; cancelling [scope] cancels the relay.
      */
     fun start(scope: CoroutineScope): Job = synchronized(lifecycleLock) {
+        // Step 1: start only once, and never again after stop().
         check(running == null) { "OutboxRelay is already started" }
         check(!stopping.value) { "OutboxRelay cannot be restarted after stop()" }
         val job =
             scope.launch(CoroutineName("outbox-relay") + lastResortHandler) {
                 supervisorScope {
+                    // Step 2: start a stats loop, one claimer that takes due rows from the database, and the
+                    // publisher workers. The channel (a small queue in memory) passes the claimed rows to them.
                     val stats = launch(CoroutineName("outbox-stats")) { statsLoop() }
                     val channel = Channel<ClaimedEvent>(settings.channelCapacity)
                     launch(CoroutineName("outbox-claimer")) { claimLoop(channel) }
@@ -132,11 +135,13 @@ class OutboxRelay(
                         List(settings.concurrency) { index ->
                             launch(CoroutineName("outbox-publisher-$index")) { publishLoop(channel) }
                         }
+                    // Step 3: wait for all workers to finish, then stop the stats loop.
                     // Workers end once the claimer has closed the channel and they have drained it (see stop()).
                     workers.joinAll()
                     stats.cancel()
                 }
             }
+        // Step 4: remember the job, so stop() can find it.
         running = job
         log.event(Level.INFO, LogType.BUSINESS, "Outbox relay started", "concurrency" to settings.concurrency)
         job
@@ -245,17 +250,20 @@ class OutboxRelay(
         // The publish runs seconds after the original request, on another coroutine; restoring its requestId into
         // the MDC makes every log line of this publish (ours and the HTTP client's) searchable by that request.
         withContext(MDCContext(correlationOf(event))) {
+            // Step 1: when the relay is stopping, give the row back for a later claim instead of publishing it.
             if (stopping.value) {
                 withContext(Dispatchers.IO) { repository.reschedule(claimed, clock.instant()) }
                 log.event(Level.DEBUG, LogType.BUSINESS, "Outbox row released on shutdown", "outboxEventId" to event.id)
                 return@withContext
             }
+            // Step 2: check the lease (the time this instance may own the row).
             if (!clock.instant().isBefore(claimed.leaseUntil)) {
                 // Waited in the channel longer than the lease: another instance may own the row by now. Skip it; it
                 // is due again and will be claimed normally (by us or by someone else).
                 log.event(Level.WARN, LogType.BUSINESS, "Outbox lease expired before publishing, skipping")
                 return@withContext
             }
+            // Step 3: publish the event and measure how long it takes.
             log.event(
                 Level.DEBUG,
                 LogType.EXTERNAL_REQUEST,
@@ -268,6 +276,7 @@ class OutboxRelay(
             val mark = TimeSource.Monotonic.markNow()
             val result = publishSafely(event)
             val elapsed = mark.elapsedNow()
+            // Step 4: save the result on the row (published, retry later or dead), then update the metrics and log it.
             val outcome = withContext(Dispatchers.IO) { record(claimed, result) }
             counters.getValue(outcome).increment()
             timers.getValue(outcome).record(elapsed.toJavaDuration())
@@ -306,6 +315,8 @@ class OutboxRelay(
                         repository.markDead(claimed, claimed.event.attempts + 1, result.reason)
 
                 is PublishResult.Retryable -> {
+                    // Give up only when both limits are passed: enough attempts and enough time since the event
+                    // was created.
                     val attempts = claimed.event.attempts + 1
                     val age = (now.toEpochMilli() - claimed.createdAt.toEpochMilli()).milliseconds
                     if (attempts >= settings.maxAttempts && age >= settings.retryFor) {

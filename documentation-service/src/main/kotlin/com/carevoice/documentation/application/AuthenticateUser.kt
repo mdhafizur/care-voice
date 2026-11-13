@@ -28,14 +28,18 @@ class AuthenticateUser(
 
     /** Checks the credentials and returns a signed token. Every failure throws the same 401 error. */
     suspend fun execute(username: String, password: String): IssuedToken {
+        // Step 1: refuse empty or too long input with the usual 401.
         if (username.isBlank() || password.isEmpty() || username.length > MAX_LENGTH || password.length > MAX_LENGTH) {
             // Still pay for one hash so even malformed attempts take the usual time.
             withContext(cpuDispatcher) { hasher.verify(password.take(MAX_LENGTH), hasher.dummyHash) }
             loginFailed("malformed-credentials")
             throw ApplicationError.Unauthorized(INVALID_CREDENTIALS)
         }
+        // Step 2: find the user and always check exactly one hash (a dummy one for an unknown name),
+        // so the response time does not reveal which usernames exist.
         val user = users.findByUsername(username)
         val valid = withContext(cpuDispatcher) { hasher.verify(password, user?.passwordHash ?: hasher.dummyHash) }
+        // Step 3: an unknown user and a wrong password both get the same 401; only the log tells them apart.
         if (user == null) {
             // The submitted name is not logged: an unknown "username" is often a password typed into the wrong field.
             loginFailed("unknown-user")
@@ -50,6 +54,7 @@ class AuthenticateUser(
             )
             throw ApplicationError.Unauthorized(INVALID_CREDENTIALS)
         }
+        // Step 4: log the successful login and return a signed token.
         log.event(
             Level.INFO,
             LogType.BUSINESS,

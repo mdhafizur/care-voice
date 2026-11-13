@@ -71,10 +71,13 @@ object AmqpTopology {
      * arguments changes nothing.
      */
     fun declare(channel: Channel) {
+        // Step 1: the three exchanges (an exchange is where messages are published; it routes them to queues).
         channel.exchangeDeclare(EVENTS_EXCHANGE, BuiltinExchangeType.TOPIC, true)
         channel.exchangeDeclare(RETRY_EXCHANGE, BuiltinExchangeType.DIRECT, true)
         channel.exchangeDeclare(DEAD_LETTER_EXCHANGE, BuiltinExchangeType.DIRECT, true)
 
+        // Step 2: the main queue. A message it gives up on (too many deliveries, or a reject) is dead-lettered
+        // (moved on) to the retry exchange. It also gets the events that come back from the retry queues.
         channel.queueDeclare(
             QUEUE,
             true,
@@ -90,6 +93,8 @@ object AmqpTopology {
         channel.queueBind(QUEUE, EVENTS_EXCHANGE, BINDING_PATTERN)
         channel.queueBind(QUEUE, EVENTS_EXCHANGE, RETRY_ROUTING_KEY)
 
+        // Step 3: one retry queue per delay. A message waits there for its TTL (time to live), then goes back to
+        // the events exchange with the key that only the main queue listens to.
         RETRY_DELAYS.forEachIndexed { tier, delay ->
             channel.queueDeclare(
                 retryQueue(tier),
@@ -106,6 +111,7 @@ object AmqpTopology {
             channel.queueBind(retryQueue(tier), RETRY_EXCHANGE, retryRoutingKey(tier))
         }
 
+        // Step 4: the dead-letter queue, where events end up after all retries are used.
         channel.queueDeclare(DEAD_LETTER_QUEUE, true, false, false, mapOf<String, Any>("x-queue-type" to "quorum"))
         channel.queueBind(DEAD_LETTER_QUEUE, DEAD_LETTER_EXCHANGE, QUEUE_ROUTING_KEY)
     }

@@ -86,8 +86,10 @@ class RedisCacheInvalidationBus(private val redis: RedisConnections) : CacheInva
      * and that cache then falls back to its TTL.
      */
     private fun decode(raw: String): CacheInvalidation? {
+        // Step 1: parse the JSON. Bad JSON gives null instead of an exception.
         val wire =
             runCatching { StorageJson.decodeFromString(InvalidationMessage.serializer(), raw) }.getOrNull()
+        // Step 2: map the cache name to an invalidation. An unknown cache name gives null.
         val message =
             wire?.let {
                 when (it.cache) {
@@ -96,6 +98,7 @@ class RedisCacheInvalidationBus(private val redis: RedisConnections) : CacheInva
                     else -> null
                 }
             }
+        // Step 3: log a message that cannot be used, and ignore it.
         if (message == null) {
             log.event(
                 Level.WARN,

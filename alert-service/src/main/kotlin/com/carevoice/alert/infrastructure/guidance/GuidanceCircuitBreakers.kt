@@ -51,6 +51,7 @@ object GuidanceCircuitBreakers {
         registry: MeterRegistry,
         settings: GuidanceBreakerSettings = GuidanceBreakerSettings(),
     ): CircuitBreaker {
+        // Step 1: the settings. The failure rate is judged over the last N calls (a count-based window).
         val config =
             CircuitBreakerConfig
                 .custom()
@@ -62,9 +63,11 @@ object GuidanceCircuitBreakers {
                 .permittedNumberOfCallsInHalfOpenState(settings.permittedCallsInHalfOpenState)
                 .writableStackTraceEnabled(false)
                 .build()
+        // Step 2: create the named breaker in its own registry (a registry holds and names breakers).
         // One registry per breaker keeps instances independent (tests create several side by side).
         val breakers = CircuitBreakerRegistry.of(config)
         val breaker = breakers.circuitBreaker(name)
+        // Step 3: export the breaker's state and call counts to the metrics registry, then return it.
         TaggedCircuitBreakerMetrics.ofCircuitBreakerRegistry(breakers).bindTo(registry)
         return breaker
     }
@@ -79,6 +82,7 @@ private val breakerLog = LoggerFactory.getLogger("com.carevoice.alert.infrastruc
  * request deadline never opens the breaker.
  */
 internal suspend fun <T> CircuitBreaker.guard(block: suspend () -> T): T {
+    // Step 1: ask the breaker for permission. When it is open, log at DEBUG and fail at once.
     if (!tryAcquirePermission()) {
         breakerLog.event(
             Level.DEBUG,
@@ -88,6 +92,8 @@ internal suspend fun <T> CircuitBreaker.guard(block: suspend () -> T): T {
         )
         throw CallNotPermittedException.createCallNotPermittedException(this)
     }
+    // Step 2: run the call and time it. An exception is recorded as a failure. A cancellation is not recorded,
+    // so a shutdown or a request deadline never opens the breaker.
     val start = System.nanoTime()
     val value =
         try {
@@ -99,6 +105,7 @@ internal suspend fun <T> CircuitBreaker.guard(block: suspend () -> T): T {
             onError(System.nanoTime() - start, TimeUnit.NANOSECONDS, e)
             throw e
         }
+    // Step 3: a normal return is recorded as a success.
     onSuccess(System.nanoTime() - start, TimeUnit.NANOSECONDS)
     return value
 }

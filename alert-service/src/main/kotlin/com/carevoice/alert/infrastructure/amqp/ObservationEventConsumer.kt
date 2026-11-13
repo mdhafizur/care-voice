@@ -127,11 +127,14 @@ class ObservationEventConsumer(
 
     /** Connects (retrying in the background while the broker is unreachable) and starts the workers. */
     fun start(scope: CoroutineScope) {
+        // Step 1: keep the scope, because a later pause needs it to start the resume loop.
         this.scope = scope
+        // Step 2: publish a gauge (a metric that shows a current value) that is 1 while paused.
         Gauge
             .builder("carevoice.amqp.consumer.paused", this) { if (it.paused) 1.0 else 0.0 }
             .description("1 while consumption is paused because a dependency (MongoDB) is down")
             .register(registry)
+        // Step 3: start the workers. Each one takes deliveries from the buffer and handles them.
         repeat(workers) { index ->
             workerJobs +=
                 scope.launch(Dispatchers.Default) {
@@ -155,6 +158,8 @@ class ObservationEventConsumer(
                     log.event(Level.DEBUG, null, "AMQP worker stopped", "worker" to index)
                 }
         }
+        // Step 4: connect to RabbitMQ in the background and retry until it works, so a broker that
+        // is down does not stop the service from starting.
         supervisor =
             scope.launch(Dispatchers.IO) {
                 while (isActive && !stopping && consumerTag == null) {
@@ -183,8 +188,10 @@ class ObservationEventConsumer(
      * to another pod.
      */
     suspend fun stop(timeout: Duration = 10.seconds) {
+        // Step 1: mark the consumer as stopping and end the connect loop.
         stopping = true
         supervisor?.cancel()
+        // Step 2: tell the broker to stop sending new messages to this consumer.
         withContext(Dispatchers.IO) {
             consumerTag?.let { tag ->
                 runCatching { synchronized(consumeLock) { consumeChannel?.basicCancel(tag) } }
@@ -198,6 +205,8 @@ class ObservationEventConsumer(
                     }
             }
         }
+        // Step 3: close the buffer and give the workers time to finish the messages they hold.
+        // Workers still busy after the timeout are cancelled.
         deliveries.close()
         val drained = withTimeoutOrNull(timeout) { workerJobs.joinAll() } != null
         if (!drained) {
@@ -209,6 +218,7 @@ class ObservationEventConsumer(
             )
             workerJobs.forEach { it.cancel() }
         }
+        // Step 4: close the channels and the connection.
         withContext(Dispatchers.IO) { closeQuietly() }
         log.info("RabbitMQ consumer stopped")
     }
@@ -223,6 +233,7 @@ class ObservationEventConsumer(
      * dead letters with publisher confirms (the broker reports that it has stored the message).
      */
     private fun connect() {
+        // Step 1: open the connection and listen to it, so `connected` follows its real state.
         val conn = connectionFactory.newConnection("alert-service-consumer")
         connection = conn
         conn.addShutdownListener { cause ->
@@ -246,15 +257,20 @@ class ObservationEventConsumer(
             },
         )
 
+        // Step 2: open the channel for consuming, declare the queues and exchanges, and set the
+        // prefetch (how many unacked messages the broker may send at once).
         val channel = conn.createChannel()
         AmqpTopology.declare(channel)
         channel.basicQos(config.prefetch)
         consumeChannel = channel
 
+        // Step 3: open a second channel for publishing, with publisher confirms (the broker
+        // answers when it has stored a message).
         val publisher = conn.createChannel()
         publisher.confirmSelect()
         publishChannel = publisher
 
+        // Step 4: start consuming from the queue and mark the consumer as connected.
         consumerTag = subscribe(channel)
         connected = true
         log.event(
@@ -312,9 +328,12 @@ class ObservationEventConsumer(
      * A request id with unexpected characters is left out.
      */
     private suspend fun handle(delivery: Delivery) {
+        // Step 1: read the request id and the trace header that the sender put on the message.
         val headers = delivery.properties.headers.orEmpty()
         val requestId = headers[HEADER_REQUEST_ID]?.toString()
         val traceparent = headers[HEADER_TRACEPARENT]?.toString()
+        // Step 2: build the log context (MDC: values added to every log line). The request id is
+        // kept only when it has the expected format.
         val mdc =
             buildMap {
                 put("type", "business")
@@ -325,6 +344,7 @@ class ObservationEventConsumer(
                 }
                 delivery.properties.messageId?.let { put("eventId", it) }
             }
+        // Step 3: process the delivery inside that log context and time it.
         withContext(MDCContext(mdc)) {
             val sample = Timer.start(registry)
             try {
@@ -343,11 +363,13 @@ class ObservationEventConsumer(
      */
     private suspend fun process(delivery: Delivery, headers: Map<String, Any?>) {
         val tag = delivery.envelope.deliveryTag
+        // Step 1: while consumption is paused, do not process the message.
         if (paused) {
             // Buffered before the pause: hand it back untouched, so it is processed once the dependency is back.
             requeue(tag)
             return
         }
+        // Step 2: log the delivery details for debugging.
         log.event(
             Level.DEBUG,
             null,
@@ -358,6 +380,8 @@ class ObservationEventConsumer(
             "schemaVersion" to headerSchemaVersion(headers),
             "bytes" to delivery.body.size,
         )
+        // Step 3: check the schema version, parse the event and process it. Ack it (confirm it to the
+        // broker) only after that worked.
         try {
             headerSchemaVersion(headers)?.let { EventParser.requireSupported(it) }
             val event = EventParser.parse(String(delivery.body, Charsets.UTF_8))
@@ -376,6 +400,8 @@ class ObservationEventConsumer(
         } catch (e: CancellationException) {
             throw e
         } catch (e: AlertServiceException) {
+            // Step 4: on failure, choose by error type. Bad events are dead-lettered (moved to a queue
+            // for failed messages), a down dependency pauses consumption, and the rest is retried later.
             when (e) {
                 is AlertServiceException.MalformedEvent,
                 is AlertServiceException.UnsupportedSchemaVersion,
@@ -416,6 +442,8 @@ class ObservationEventConsumer(
      * again once [health] is up. Does nothing when already paused or stopping.
      */
     private suspend fun pause(health: DependencyHealthCheck, dependency: String) {
+        // Step 1: switch to paused under the lock, so only one caller pauses, and take the
+        // consumer tag to cancel.
         val tagToCancel: String?
         synchronized(consumeLock) {
             if (paused || stopping) return
@@ -423,6 +451,8 @@ class ObservationEventConsumer(
             tagToCancel = consumerTag
             consumerTag = null
         }
+        // Step 2: cancel the consumer, so the broker stops sending messages while the
+        // dependency is down.
         withContext(Dispatchers.IO) {
             runCatching { tagToCancel?.let { tag -> synchronized(consumeLock) { consumeChannel?.basicCancel(tag) } } }
                 .onFailure {
@@ -434,6 +464,7 @@ class ObservationEventConsumer(
                     )
                 }
         }
+        // Step 3: log the pause and start a background loop that resumes once the dependency is healthy.
         log.event(
             Level.WARN,
             LogType.EXTERNAL_REQUEST,
@@ -447,8 +478,11 @@ class ObservationEventConsumer(
     /** Checks [health] every [healthPollInterval] and subscribes again once it is up, until that works. */
     private suspend fun resumeWhenHealthy(health: DependencyHealthCheck) {
         while (!stopping) {
+            // Step 1: wait, then check the dependency. Try again next round while it is down.
             delay(healthPollInterval)
             if (!isUp(health)) continue
+            // Step 2: subscribe again and clear the pause flag, under the lock so a pause cannot run at the
+            // same time.
             try {
                 synchronized(consumeLock) {
                     val channel = consumeChannel?.takeIf { it.isOpen } ?: error("consume channel is not open")
@@ -498,6 +532,8 @@ class ObservationEventConsumer(
      * If publishing the retry fails, the message is nacked so the main queue moves it to the 5 s retry queue.
      */
     private suspend fun retryOrDeadLetter(delivery: Delivery, cause: Exception) {
+        // Step 1: after the last allowed delivery, give up and dead-letter the event (move it to the
+        // queue for failed messages).
         val attempt = deliveryAttempt(delivery.properties.headers.orEmpty())
         if (attempt >= MAX_DELIVERIES) {
             log.event(
@@ -511,6 +547,7 @@ class ObservationEventConsumer(
             deadLetter(delivery, reason = "max-deliveries-exceeded: ${cause.javaClass.simpleName}")
             return
         }
+        // Step 2: pick the retry tier (a queue that holds messages for a fixed time) from the attempt.
         val tier = AmqpTopology.retryTier(attempt)
         val delay = AmqpTopology.RETRY_DELAYS[tier]
         log.event(
@@ -522,6 +559,8 @@ class ObservationEventConsumer(
             "retryInMs" to delay.inWholeMilliseconds,
             "error" to cause.javaClass.simpleName,
         )
+        // Step 3: publish a copy with the next attempt number to that retry queue, wait for the
+        // broker's confirm, then ack the original.
         val decision =
             try {
                 val headers = withoutDeathHistory(delivery.properties.headers.orEmpty()).toMutableMap()
@@ -545,6 +584,7 @@ class ObservationEventConsumer(
                 }
                 "retry-fallback"
             }
+        // Step 4: log the decision and count the retry.
         log.event(
             Level.DEBUG,
             null,

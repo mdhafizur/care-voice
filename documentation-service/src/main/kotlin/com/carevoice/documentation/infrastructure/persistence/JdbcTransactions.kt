@@ -45,20 +45,26 @@ class JdbcTransactions(private val dataSource: DataSource) : TransactionRunner {
      * A nested call joins the outer transaction. An unreachable database becomes a 503.
      */
     override suspend fun <T> inTransaction(block: suspend () -> T): T {
+        // Step 1: are we already inside a transaction?
         // Nested call: join the outer transaction instead of opening a second connection.
         if (currentCoroutineContext()[TransactionConnection] != null) return block()
+        // Step 2: otherwise run on the IO threads with the log context (MDC); a lost database becomes a 503.
         return withContext(Dispatchers.IO + MDCContext()) {
             unavailableAs503 {
                 dataSource.connection.use { connection ->
+                    // Step 3: turn off auto-commit, so every statement in the block is part of one transaction.
                     connection.autoCommit = false
                     try {
+                        // Step 4: run the block with this connection in the coroutine context; commit on success.
                         val result = withContext(TransactionConnection(connection)) { block() }
                         connection.commit()
                         result
                     } catch (e: Throwable) {
+                        // Step 5: on any error, roll back and rethrow; a failed rollback is added to that error.
                         runCatching { connection.rollback() }.onFailure { e.addSuppressed(it) }
                         throw e
                     } finally {
+                        // Step 6: give the connection back to the pool in its normal auto-commit mode.
                         runCatching { connection.autoCommit = true }
                     }
                 }
@@ -109,12 +115,17 @@ private val readRetryLog = LoggerFactory.getLogger("com.carevoice.documentation.
  * - "no connection from the pool in time": the database is down, not blipping; waiting again only adds latency.
  */
 internal suspend fun <T> withReadConnection(dataSource: DataSource, block: (Connection) -> T): T {
+    // Step 1: inside a transaction, use its connection and never retry (see above).
     if (currentCoroutineContext()[TransactionConnection] != null) return withConnection(dataSource, block)
+    // Step 2: outside one, read on the IO threads; a database that cannot be reached becomes a 503.
     return withContext(Dispatchers.IO + MDCContext()) {
         unavailableAs503 {
             try {
+                // Step 3: try the read on a connection from the pool.
                 dataSource.connection.use(block)
             } catch (e: SQLException) {
+                // Step 4: retry only a lost connection: log it, wait a short random pause, then read once more
+                // on a new connection.
                 if (!SqlStates.isConnectionLost(e)) throw e
                 readRetryLog.event(
                     Level.WARN,

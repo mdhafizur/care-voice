@@ -38,9 +38,12 @@ class GetAlertGuidance(
      * Answers NO_MATCHING_PROTOCOL when no section scores at least the embedder's minimum score.
      */
     suspend fun execute(scope: WardScope, alertId: String): AlertGuidance {
+        // Step 1: load the alert from the caller's ward (404 when it is not there), and all protocol
+        // sections stored for this embedding model.
         val alert = alerts.findById(scope, alertId) ?: throw AlertServiceException.AlertNotFound(alertId)
         val corpus = chunks?.findAll(embedder.model).orEmpty()
 
+        // Step 2: retrieve. For each query, find the best protocol and its sections, then drop repeated sections.
         // Review first: for an unconfirmed value, "measure it yourself" comes before the clinical response.
         val sources =
             GuidanceQuery
@@ -63,6 +66,7 @@ class GetAlertGuidance(
                     }
                 }
                 .distinctBy { it.chunk.id }
+        // Step 3: no section scored high enough, so answer NO_MATCHING_PROTOCOL instead of guessing.
         if (sources.isEmpty()) {
             log.event(
                 Level.INFO,
@@ -75,10 +79,12 @@ class GetAlertGuidance(
             return AlertGuidance(alert, GuidanceStatus.NO_MATCHING_PROTOCOL, null, emptyList(), emptyList())
         }
 
+        // Step 4: let the writer phrase cited steps. If it fails or is not grounded, copy the protocol's own steps.
         val situation = "${alert.message} Severity: ${alert.severity.name}."
         val generated = writer?.let { generate(it, situation, sources) }
         val (generator, steps) =
             generated ?: (extractive.generator to extractive.write(situation, sources).orEmpty())
+        // Step 5: log the result and return the guidance with its sources.
         log.event(
             Level.INFO,
             LogType.BUSINESS,
@@ -111,6 +117,7 @@ class GetAlertGuidance(
         situation: String,
         sources: List<ScoredChunk>,
     ): Pair<GuidanceGenerator, List<GuidanceStep>>? {
+        // Step 1: ask the writer. Any error is logged and treated as "no answer"; a cancelled call is passed on.
         val steps =
             try {
                 writer.write(situation, sources)
@@ -126,7 +133,9 @@ class GetAlertGuidance(
                 )
                 null
             }
+        // Step 2: no answer (an error or a refusal), so the caller uses the extractive writer.
         if (steps == null) return null
+        // Step 3: drop steps that cite anything other than the retrieved sections (not grounded).
         if (!isGrounded(steps, sources)) {
             log.event(
                 Level.WARN,

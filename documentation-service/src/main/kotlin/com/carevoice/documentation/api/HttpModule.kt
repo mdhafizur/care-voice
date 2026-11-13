@@ -31,6 +31,7 @@ import io.ktor.server.sse.SSE
  * 415/413/400 itself, so no ContentNegotiation plugin is installed and no body is parsed implicitly.
  */
 fun Application.httpModule(deps: Dependencies) {
+    // Plugins, in the order explained above.
     installCorrelationAndAccessLog()
     installMetrics(deps.meterRegistry)
     installSecurityHeaders()
@@ -40,8 +41,10 @@ fun Application.httpModule(deps: Dependencies) {
     install(SSE)
 
     routing {
+        // Public routes: no token needed.
         operationalRoutes(deps)
         authRoutes(deps)
+        // Protected routes: a valid token, the care-staff role and a per-user rate limit.
         authenticate(JWT_AUTH) {
             install(AuthenticatedMdc)
             install(RoleGuard) { allowed = Role.CARE_STAFF }

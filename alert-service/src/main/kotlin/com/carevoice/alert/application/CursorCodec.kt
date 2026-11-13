@@ -26,15 +26,19 @@ object CursorCodec {
 
     /** @throws AlertServiceException.InvalidCursor when [cursor] is not a cursor this codec produced. */
     fun decode(cursor: String): Keyset {
+        // Step 1: reject an empty or too long cursor before any decoding work.
         if (cursor.isEmpty() || cursor.length > MAX_ENCODED_LENGTH) {
             throw AlertServiceException.InvalidCursor("unexpected length")
         }
+        // Step 2: decode the base64url text (a URL-safe way to write bytes as letters and digits).
         val raw =
             try {
                 String(Base64.getUrlDecoder().decode(cursor), Charsets.UTF_8)
             } catch (_: IllegalArgumentException) {
                 throw AlertServiceException.InvalidCursor("not base64url")
             }
+        // Step 3: split it into direction, time and id, and check each part.
+        // Any problem throws InvalidCursor with a short reason.
         val parts = raw.split('|', limit = 3)
         if (parts.size != 3) throw AlertServiceException.InvalidCursor("unexpected structure")
         val direction =

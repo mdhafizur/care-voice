@@ -31,11 +31,15 @@ private val DEADLINE_RETRY_AFTER = 2.seconds
  */
 fun Application.installRequestDeadline(timeout: Duration, exemptPaths: Set<String>) {
     intercept(ApplicationCallPipeline.Plugins) {
+        // Step 1: the exempt paths get no deadline.
         val path = call.request.path()
         if (path in exemptPaths) return@intercept
+        // Step 2: run the rest of the request with a time limit.
         try {
             withTimeout(timeout) { proceed() }
         } catch (e: TimeoutCancellationException) {
+            // Step 3: when time runs out, log it and answer 503 (service unavailable), so the client
+            // retries later.
             deadlineLog.event(
                 Level.WARN,
                 LogType.REQUEST,

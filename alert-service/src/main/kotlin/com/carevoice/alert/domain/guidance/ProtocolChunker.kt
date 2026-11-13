@@ -17,12 +17,14 @@ object ProtocolChunker {
      * Throws when the id is not lowercase kebab-case (words joined by `-`) or the document has no `# ` title.
      */
     fun chunk(documentId: String, markdown: String): List<ProtocolChunk> {
+        // Step 1: check the id and find the `# ` title, which every chunk text will start with.
         require(documentId.matches(Regex("[a-z0-9-]+"))) { "documentId must be lowercase kebab-case: $documentId" }
         val lines = markdown.lines()
         val title =
             lines.firstOrNull { it.startsWith("# ") }?.removePrefix("# ")?.trim()
                 ?: throw IllegalArgumentException("Protocol $documentId has no '# ' title line")
 
+        // Step 2: group the lines by `##` heading. Lines before the first `##` belong to no section and are dropped.
         val sections = mutableListOf<Pair<String, MutableList<String>>>()
         for (line in lines) {
             when {
@@ -31,6 +33,7 @@ object ProtocolChunker {
             }
         }
 
+        // Step 3: split long sections at blank lines and number all chunks of the document 1, 2, 3, ...
         var index = 0
         return sections.flatMap { (section, body) ->
             split(body.joinToString("\n").trim()).map { part ->

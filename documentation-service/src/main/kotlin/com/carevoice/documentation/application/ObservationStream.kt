@@ -60,7 +60,10 @@ class ObservationStream(
      * ward. Completes normally when [closeAll] is called (graceful shutdown), so clients reconnect elsewhere.
      */
     fun subscribe(caller: Caller, lastEventId: String?): Flow<ObservationRecord> = channelFlow {
+        // Step 1: only logged-in staff may open the live feed.
         caller.requireAnyRole()
+        // Step 2: listen for live events the caller may see, in a small buffer per client. When the buffer is full,
+        // the oldest event is dropped, so a slow client cannot hold up the others.
         val live =
             Channel<ObservationRecord>(capacity = PER_CLIENT_BUFFER, onBufferOverflow = BufferOverflow.DROP_OLDEST)
         // UNDISPATCHED: the subscription is registered before this line returns, i.e. before the replay query.
@@ -69,8 +72,11 @@ class ObservationStream(
                 // trySend: never suspends (DROP_OLDEST) and does not throw once the channel is closed at shutdown.
                 events.collect { if (caller.canSee(it.tenantId, it.wardId)) live.trySend(it) }
             }
+        // Step 3: end the feed when the server starts to shut down.
         val closeJob = launch { closing.first { it }.also { live.close() } }
 
+        // Step 4: after a reconnect the client sends the last event id it saw. Send what it missed first,
+        // at most MAX_REPLAY records, and remember their ids.
         val replayedIds = HashSet<UUID>()
         lastEventId?.let(::parseUuid)?.let { after ->
             observations.findAfter(caller.tenantId, caller.wardId, after, MAX_REPLAY).forEach {
@@ -87,6 +93,7 @@ class ObservationStream(
             "replayed" to replayedIds.size,
             "subscribers" to subscriberCount,
         )
+        // Step 5: pass on live events, but skip any the replay already sent, because one event can be in both.
         var delivered = 0
         for (record in live) {
             if (record.id !in replayedIds) {
@@ -94,6 +101,7 @@ class ObservationStream(
                 delivered++
             }
         }
+        // Step 6: the feed is closed. Log it and stop the helper jobs.
         log.event(
             Level.DEBUG,
             LogType.BUSINESS,

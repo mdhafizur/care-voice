@@ -50,7 +50,9 @@ class ProcessObservationEvent(
      * When the earlier attempt had not finished, the (idempotent) alert insert runs again first.
      */
     suspend fun execute(event: ObservationRecordedEvent): ProcessingResult {
+        // Step 1: check the event and turn it into an observation. A bad event throws.
         val observation = validate(event)
+        // Step 2: run the alert rules on the observation and log which rules fired.
         // Mongo stores dates with millisecond precision; truncating here keeps stored and returned values identical.
         val now = clock.instant().truncatedTo(ChronoUnit.MILLIS)
         val findings = evaluator.evaluate(observation)
@@ -64,6 +66,7 @@ class ProcessObservationEvent(
             "observationStatus" to observation.status.name,
             "rulesFired" to findings.joinToString(",") { it.rule.name }.ifEmpty { "none" },
         )
+        // Step 3: build the new alerts and the processed-event record, which starts as not completed.
         val newAlerts =
             findings.map { finding ->
                 Alert.open(ids.next(), event.eventId, observation, finding, createdAt = now)
@@ -79,12 +82,15 @@ class ProcessObservationEvent(
                 completed = false,
             )
 
+        // Step 4: claim the event by inserting its record. A unique index lets only one attempt win, so the alerts
+        // are created once even when the event arrives twice.
         if (processedEvents.tryInsert(record)) {
             storeAlerts(event.eventId, newAlerts)
             metrics.eventProcessed(duplicate = false)
             return ProcessingResult(event.eventId, newAlerts.size, duplicate = false)
         }
 
+        // Step 5: the event was claimed before, for example a redelivery from the queue. Count it as a duplicate.
         val existing = processedEvents.find(event.eventId)
         log.event(
             Level.DEBUG,
@@ -126,9 +132,11 @@ class ProcessObservationEvent(
 
     /** Throws [AlertServiceException.UnsupportedSchemaVersion] or [AlertServiceException.InvalidEvent]. */
     private fun validate(event: ObservationRecordedEvent): Observation {
+        // Step 1: reject a schema version (event format version) this service does not know.
         if (event.schemaVersion !in SUPPORTED_SCHEMA_VERSIONS) {
             throw AlertServiceException.UnsupportedSchemaVersion(event.schemaVersion, SUPPORTED_SCHEMA_VERSIONS)
         }
+        // Step 2: check the ids. All problems go into one list, so the error names every bad field at once.
         val violations = mutableListOf<FieldViolation>()
         // Records a violation when an id is blank or longer than MAX_ID_LENGTH.
         fun id(field: String, value: String) {
@@ -144,6 +152,7 @@ class ProcessObservationEvent(
         id("residentId", event.residentId)
         id("observationId", event.observationId)
 
+        // Step 3: parse the time, source, status and vital. Each bad value adds a violation.
         val observedAt =
             try {
                 Instant.parse(event.occurredAt).truncatedTo(ChronoUnit.MILLIS)
@@ -157,6 +166,8 @@ class ProcessObservationEvent(
         if (status == null) violations += FieldViolation("status", "must be one of ${ObservationStatus.entries}")
         val vital = toVital(event.vital, violations)
 
+        // Step 4: reject the event if anything was wrong. Otherwise the `!!` below are safe, because every null
+        // value added a violation.
         if (violations.isNotEmpty()) throw AlertServiceException.InvalidEvent(violations)
         return Observation(
             observationId = event.observationId,

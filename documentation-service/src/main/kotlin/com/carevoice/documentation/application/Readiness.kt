@@ -40,6 +40,8 @@ class Readiness(private val probes: List<HealthProbe>) {
 
     /** Runs all probes in parallel. Ready only when no critical probe is DOWN and no shutdown has started. */
     suspend fun check(): ReadinessReport {
+        // Step 1: run all probes at the same time. Each one is timed and logged; a probe that throws gets
+        // its fallback status.
         val results =
             coroutineScope {
                 probes.map { probe ->
@@ -72,6 +74,8 @@ class Readiness(private val probes: List<HealthProbe>) {
                 }
                     .awaitAll()
             }
+        // Step 2: decide readiness, then the overall status. DEGRADED means still ready, but a non-critical
+        // probe is not UP.
         val criticalDown = results.any { it.critical && it.status == HealthStatus.DOWN }
         val ready = !criticalDown && !isShuttingDown
         val overall =
@@ -80,6 +84,7 @@ class Readiness(private val probes: List<HealthProbe>) {
                 results.any { it.status != HealthStatus.UP } -> HealthStatus.DEGRADED
                 else -> HealthStatus.UP
             }
+        // Step 3: return the report; during shutdown, also log why it is DOWN.
         if (isShuttingDown) log.event(Level.DEBUG, LogType.BUSINESS, "Readiness DOWN: shutting down")
         return ReadinessReport(ready, overall, results)
     }

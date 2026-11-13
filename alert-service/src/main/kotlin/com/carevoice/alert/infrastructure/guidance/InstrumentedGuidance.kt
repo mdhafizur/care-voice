@@ -33,6 +33,8 @@ internal class ProviderCalls(private val provider: String, private val registry:
      * rethrown. Cancellation is passed on at once and not recorded.
      */
     suspend fun <T> record(operation: String, items: Int, call: suspend () -> T, resultOf: (T) -> String = { OK }): T {
+        // Step 1: run the call and time it. A failure is kept as a value for now, so it is still
+        // measured and logged.
         val mark = TimeSource.Monotonic.markNow()
         val outcome =
             try {
@@ -42,6 +44,7 @@ internal class ProviderCalls(private val provider: String, private val registry:
             } catch (e: Exception) {
                 Result.failure(e)
             }
+        // Step 2: turn the outcome into a result label and record the time in a timer metric with it.
         val elapsed = mark.elapsedNow()
         val result = outcome.fold(resultOf) { ERROR }
         Timer
@@ -51,6 +54,7 @@ internal class ProviderCalls(private val provider: String, private val registry:
             .publishPercentileHistogram()
             .register(registry)
             .record(elapsed.toJavaDuration())
+        // Step 3: log one line per call, at WARN when it failed.
         log.event(
             if (outcome.isFailure) Level.WARN else Level.INFO,
             LogType.EXTERNAL_REQUEST,
@@ -62,6 +66,7 @@ internal class ProviderCalls(private val provider: String, private val registry:
             "durationMs" to elapsed.inWholeMilliseconds,
             "error" to outcome.exceptionOrNull()?.javaClass?.simpleName,
         )
+        // Step 4: return the value, or throw the saved error again.
         return outcome.getOrThrow()
     }
 
@@ -119,7 +124,10 @@ private val API_ERROR_CODE = Regex("^[A-Za-z0-9_.]{1,64}$")
  * message or the prompt: they can echo protocol text or the request.
  */
 internal fun logProviderResponse(provider: String, model: String, operation: String, status: Int, body: String) {
+    // Step 1: do nothing unless debug logging is on, so the body is not parsed for nothing.
     if (!providerHttpLog.isDebugEnabled) return
+    // Step 2: for an error answer, read the provider's error code from the body. Keep it only
+    // when it looks like a short code, so no free text from the body reaches the logs.
     val apiError =
         if (status in 200..299) {
             null
@@ -129,6 +137,7 @@ internal fun logProviderResponse(provider: String, model: String, operation: Str
                 ((error?.get("status") ?: error?.get("type")) as? JsonPrimitive)?.contentOrNull
             }.getOrNull()?.takeIf { API_ERROR_CODE.matches(it) }
         }
+    // Step 3: log the status and the error code, never the body itself.
     providerHttpLog.event(
         Level.DEBUG,
         LogType.EXTERNAL_REQUEST,

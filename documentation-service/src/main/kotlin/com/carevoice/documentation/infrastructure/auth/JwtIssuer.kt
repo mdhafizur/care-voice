@@ -54,9 +54,11 @@ class JwtIssuer(
 
     /** Builds and signs an HS256 JWT with all claims, and logs its id (jti), never the token itself. */
     private fun sign(subject: String, tenant: String, ward: String, roles: List<String>, ttl: Duration): String {
+        // Step 1: work out the token id (jti) and the issue and expiry times.
         val now = clock.instant()
         val tokenId = newTokenId().toString()
         val expiresAt = now.plus(ttl.toJavaDuration())
+        // Step 2: log that a token was issued, at DEBUG.
         // The jti identifies the token in logs without revealing it; the token itself is never logged.
         log.event(
             Level.DEBUG,
@@ -67,6 +69,7 @@ class JwtIssuer(
             "roles" to roles.joinToString(","),
             "expiresAt" to expiresAt.toString(),
         )
+        // Step 3: build the token with all claims and sign it with the shared secret (HS256).
         return JWT
             .create()
             .withIssuer(config.issuer)

@@ -31,13 +31,17 @@ class ConfirmObservation(
      * An id that is not a UUID is a 404. [expectedVersion] is the `If-Match` value; null means the header was missing.
      */
     suspend fun execute(caller: Caller, observationId: String, expectedVersion: Int?): ObservationRecord {
+        // Step 1: only logged-in staff may confirm. A malformed id gives the same 404 as an unknown one.
         caller.requireAnyRole()
         val id = parseUuid(observationId) ?: throw ApplicationError.NotFound("Observation", observationId)
         val confirmed =
             transactions.inTransaction {
+                // Step 2: load the observation from the caller's ward. One in another ward also gives 404.
                 val current =
                     observations.findById(caller.tenantId, caller.wardId, id)
                         ?: throw ApplicationError.NotFound("Observation", observationId)
+                // Step 3: the client must send the version it last saw, and it must still be the
+                // current one, so nobody confirms a note that changed after they read it.
                 if (expectedVersion == null) throw ApplicationError.PreconditionRequired()
                 if (current.version != expectedVersion) {
                     log.event(
@@ -50,6 +54,7 @@ class ConfirmObservation(
                     )
                     throw ApplicationError.PreconditionFailed()
                 }
+                // Step 4: a note that is already confirmed cannot be confirmed again (409).
                 if (current.observation.status == ObservationStatus.CONFIRMED) {
                     log.event(
                         Level.DEBUG,
@@ -60,6 +65,8 @@ class ConfirmObservation(
                     )
                     throw ApplicationError.Conflict("already-confirmed", "The observation is already confirmed.")
                 }
+                // Step 5: confirm with a conditional update (it changes the row only if the version
+                // is still the same) and write the audit row in the same transaction.
                 val now = clock.instant()
                 when (
                     val outcome = observations.confirm(
@@ -101,6 +108,7 @@ class ConfirmObservation(
                     ConfirmOutcome.NotFound -> throw ApplicationError.NotFound("Observation", observationId)
                 }
             }
+        // Step 6: after the commit, log the result and tell the cache to drop this ward's pages.
         log.event(
             Level.INFO,
             LogType.BUSINESS,

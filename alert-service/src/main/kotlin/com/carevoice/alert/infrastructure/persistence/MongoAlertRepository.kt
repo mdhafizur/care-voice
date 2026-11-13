@@ -40,12 +40,16 @@ class MongoAlertRepository(database: MongoDatabase) : AlertRepository {
      * stop the others. Duplicate-key errors are expected and filtered out; anything else propagates.
      */
     override suspend fun insertAll(alerts: List<Alert>): List<Alert> {
+        // Step 1: an empty list needs no database call.
         if (alerts.isEmpty()) return emptyList()
         return MongoErrors.translate {
             try {
+                // Step 2: insert all alerts. Unordered means one rejected alert does not stop the others.
                 collection.insertMany(alerts.map(AlertDocumentMapper::toDocument), InsertManyOptions().ordered(false))
                 alerts
             } catch (e: MongoBulkWriteException) {
+                // Step 3: if only duplicate keys failed, return just the alerts that were
+                // really inserted. Any other error is thrown.
                 if (!MongoErrors.onlyDuplicateKeys(e)) throw e
                 val failed = e.writeErrors.map { it.index }.toSet()
                 // Redelivered event: the unique {eventId, rule} index rejected the alerts that already exist.
@@ -77,15 +81,19 @@ class MongoAlertRepository(database: MongoDatabase) : AlertRepository {
      * instead of skipping rows). For the NEWER direction the rows come back oldest first (ascending sort).
      */
     override suspend fun findPage(scope: WardScope, status: AlertStatus?, keyset: Keyset?, limit: Int): List<Alert> {
+        // Step 1: build the filter: always the caller's ward scope, plus the status and the cursor
+        // position when they are given.
         val filters = mutableListOf(scopeFilter(scope))
         status?.let { filters += Filters.eq(AlertFields.STATUS, it.name) }
         keyset?.let { filters += keysetFilter(it) }
+        // Step 2: sort by time and id. A page of newer alerts reads oldest first, otherwise newest first.
         val sort =
             if (keyset?.direction == Keyset.Direction.NEWER) {
                 Sorts.ascending(AlertFields.CREATED_AT, AlertFields.ID)
             } else {
                 Sorts.descending(AlertFields.CREATED_AT, AlertFields.ID)
             }
+        // Step 3: run the query and turn each document into an alert.
         return MongoErrors.translate {
             collection
                 .find(Filters.and(filters))
@@ -118,6 +126,8 @@ class MongoAlertRepository(database: MongoDatabase) : AlertRepository {
         acknowledgedBy: String,
         acknowledgedAt: Instant,
     ): Alert? {
+        // Step 1: match only an OPEN alert in the caller's scope that still has the expected version
+        // (optimistic locking: the update fails if someone changed the alert in the meantime).
         val filter =
             Filters.and(
                 scopeFilter(scope),
@@ -125,6 +135,7 @@ class MongoAlertRepository(database: MongoDatabase) : AlertRepository {
                 Filters.eq(AlertFields.STATUS, AlertStatus.OPEN.name),
                 Filters.eq(AlertFields.VERSION, expectedVersion),
             )
+        // Step 2: set the alert to acknowledged, store who did it and when, and raise the version by one.
         val update =
             Updates.combine(
                 Updates.set(AlertFields.STATUS, AlertStatus.ACKNOWLEDGED.name),
@@ -132,6 +143,8 @@ class MongoAlertRepository(database: MongoDatabase) : AlertRepository {
                 Updates.set(AlertFields.ACKNOWLEDGED_AT, acknowledgedAt.toBsonDate()),
                 Updates.inc(AlertFields.VERSION, 1L),
             )
+        // Step 3: apply both in one atomic call (all or nothing) and return the new alert,
+        // or null when nothing matched. Log whether it matched.
         return MongoErrors.translate {
             collection
                 .findOneAndUpdate(filter, update, FindOneAndUpdateOptions().returnDocument(ReturnDocument.AFTER))

@@ -104,8 +104,11 @@ class RedisConnections(
      * each message to the listeners of its channel, and it subscribes to all channels registered so far.
      */
     private fun connect() {
+        // Step 1: the command connection, used for normal commands such as PUBLISH.
         if (commands == null) commands = client.connect()
         if (pubSub == null) {
+            // Step 2: the pub/sub connection. A connection in subscribe mode can run no other commands, so it is
+            // a separate one.
             val connection = client.connectPubSub()
             connection.addListener(
                 object : RedisPubSubAdapter<String, String>() {
@@ -125,6 +128,7 @@ class RedisConnections(
                     }
                 },
             )
+            // Step 3: subscribe to the channels that listeners registered while Redis was not reachable yet.
             if (listeners.isNotEmpty()) connection.sync().subscribe(*listeners.keys.toTypedArray())
             pubSub = connection
         }

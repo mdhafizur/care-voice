@@ -117,6 +117,7 @@ private fun runMigrations(): Int = try {
 
 /** Starts the HTTP server and the background work, then blocks until the shutdown hook has finished shutting down. */
 private fun runService() {
+    // Step 1: load and check the configuration; stop the process on any error.
     val config =
         try {
             AppConfig.load()
@@ -127,6 +128,7 @@ private fun runService() {
         }
     log.info("Starting documentation-service with {}", config)
 
+    // Step 2: build every part of the service, then start the background work and the HTTP server.
     // Ktor would otherwise register its own shutdown hook and stop the server immediately on SIGTERM, before
     // readiness has flipped; our hook below runs the full ordered shutdown instead.
     System.setProperty("io.ktor.server.engine.ShutdownHook", "false")
@@ -138,6 +140,7 @@ private fun runService() {
     system.startBackground()
     server.start(wait = false)
 
+    // Step 3: on SIGTERM (the stop signal) run the ordered shutdown, which lets running requests finish.
     val stopped = CountDownLatch(1)
     Runtime.getRuntime().addShutdownHook(
         Thread({
@@ -147,6 +150,7 @@ private fun runService() {
             stopped.countDown()
         }, "graceful-shutdown"),
     )
+    // Step 4: keep the main thread waiting until that shutdown is done.
     stopped.await()
 }
 
@@ -215,6 +219,8 @@ class ServiceSystem private constructor(
 
         /** Builds every adapter and use case from [config]. [clock] is the time source for all of them. */
         fun create(config: AppConfig, clock: Clock = Clock.systemUTC()): ServiceSystem {
+            // Step 1: core parts: metrics, a scope for background work, the database pools, encryption,
+            // password hashing and the token issuer.
             val meterRegistry = PrometheusMeterRegistry(PrometheusConfig.DEFAULT)
             val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
             val database = Database.create(config.database, config.readDatabase, meterRegistry)
@@ -223,12 +229,15 @@ class ServiceSystem private constructor(
             val hasher = BcryptPasswordHasher()
             val jwtIssuer = JwtIssuer(config.jwt, clock)
 
+            // Step 2: Redis (a shared in-memory store) for cache clearing across pods, the live feed and rate limits.
             val redis = RedisConnections(config.redisUrl, meterRegistry)
             val cacheBus: CacheInvalidationBus = RedisCacheInvalidationBus(redis)
             val broadcaster: ObservationBroadcaster = RedisObservationBroadcaster(redis)
             val rateLimiter =
                 RedisRateLimiter(redis, meterRegistry, InMemoryRateLimiter(clock), floorScopes = setOf(LOGIN_SCOPE))
 
+            // Step 3: repositories (database access). Both caches listen for clearing messages, so other pods'
+            // changes reach them.
             val residents =
                 CachingResidentRepository(PostgresResidentRepository(database.primary, encryptor), meterRegistry)
             val queryCache = CaffeineObservationQueryCache(meterRegistry)
@@ -239,6 +248,7 @@ class ServiceSystem private constructor(
             val observations = PostgresObservationRepository(database.primary)
             val readObservations = PostgresObservationRepository(database.read)
 
+            // Step 4: the transcript processor. Its AI fallback exists only when it is turned on and has an API key.
             val httpClients = mutableListOf<HttpClient>()
             val aiExtractor =
                 if (config.ai.enabled && config.ai.apiKey != null) {
@@ -250,6 +260,8 @@ class ServiceSystem private constructor(
                 }
             val processor = TranscriptProcessor(aiFallback = aiExtractor, clock = clock)
 
+            // Step 5: the event publisher (RabbitMQ or direct HTTP to alert-service) and the outbox relay,
+            // which sends the saved events.
             val serviceTokens = ServiceTokenProvider(jwtIssuer, clock)
             val publisher: EventPublisher =
                 when (config.eventTransport) {
@@ -267,6 +279,8 @@ class ServiceSystem private constructor(
                 }
             val relay = OutboxRelay(database.primary, publisher, OutboxSettings(), meterRegistry, clock)
 
+            // Step 6: health checks for readiness. The read replica is not critical, so it alone never makes the pod
+            // unready.
             val probes =
                 buildList<HealthProbe> {
                     add(PostgresHealthProbe(database.primary))
@@ -279,6 +293,7 @@ class ServiceSystem private constructor(
                     if (publisher is AmqpEventPublisher) add(FlagHealthProbe("rabbitmq") { publisher.isConnected })
                 }
 
+            // Step 7: the use cases, each given the ports (interfaces) it needs.
             val dependencies =
                 Dependencies(
                     authenticateUser = AuthenticateUser(PostgresUserRepository(database.primary), hasher, jwtIssuer),
@@ -322,6 +337,7 @@ class ServiceSystem private constructor(
                     ),
                 )
 
+            // Step 8: keep the parts that must be started and closed later.
             return ServiceSystem(
                 dependencies = dependencies,
                 database = database,

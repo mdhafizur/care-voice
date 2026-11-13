@@ -27,7 +27,9 @@ class QueryObservations(
      * `recordedFrom` after `recordedTo` is a 422 error.
      */
     suspend fun execute(caller: Caller, filter: ObservationFilter, page: PageRequest): Page<ObservationRecord> {
+        // Step 1: only logged-in staff may query observations.
         caller.requireAnyRole()
+        // Step 2: a time range that starts after it ends is a 422 (well formed, but it makes no sense).
         val from = filter.recordedFrom
         val to = filter.recordedTo
         if (from != null && to != null && from.isAfter(to)) {
@@ -36,6 +38,8 @@ class QueryObservations(
                 listOf(FieldError("recordedFrom", "must not be after recordedTo")),
             )
         }
+        // Step 3: read through the cache. The key holds tenant and ward, so one ward never gets another ward's
+        // cached result.
         val key = ObservationQueryKey(caller.tenantId, caller.wardId, filter, page)
         return cache.getOrLoad(key) { readObservations.query(caller.tenantId, caller.wardId, filter, page) }.also {
             if (log.isDebugEnabled) {

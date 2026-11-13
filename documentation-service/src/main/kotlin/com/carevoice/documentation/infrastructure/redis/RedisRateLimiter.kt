@@ -43,9 +43,12 @@ class RedisRateLimiter(
      * When Redis fails or is not connected, it allows the request, except for [floorScopes], which use [fallback].
      */
     override suspend fun tryAcquire(scope: String, key: String, limit: Int, window: Duration): RateLimitDecision {
+        // Step 1: get the Redis connection. It is null while Redis is not reachable.
         val connection = redis.commandsOrNull()
         if (connection != null) {
             try {
+                // Step 2: run the counting script in Redis. It counts this request and returns the count and
+                // the time left in the window.
                 val result =
                     connection
                         .async()
@@ -56,6 +59,7 @@ class RedisRateLimiter(
                             window.inWholeMilliseconds.toString(),
                         )
                         .await()
+                // Step 3: allow the request while the count is within the limit, otherwise reject it.
                 val count = result[0]
                 val ttl = result[1].coerceAtLeast(1).milliseconds
                 return (
@@ -86,6 +90,8 @@ class RedisRateLimiter(
                 "scope" to scope,
             )
         }
+        // Step 4: Redis failed, so fail open (let the request through). Floor scopes still get
+        // the in-memory limit of this instance.
         failOpen.increment()
         return if (scope in
             floorScopes

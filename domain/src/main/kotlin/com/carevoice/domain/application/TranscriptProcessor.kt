@@ -60,20 +60,25 @@ class TranscriptProcessor(
      */
     suspend fun process(residentId: ResidentId, transcript: String): Either<ValidationError, ProcessingResult> =
         either {
+            // Step 1: check the input: not blank and not too long. A failed `ensure` stops here with a Left.
             ensure(transcript.isNotBlank()) { BlankInput("transcript") }
             ensure(transcript.length <= MAX_TRANSCRIPT_LENGTH) { TooLong("transcript", MAX_TRANSCRIPT_LENGTH) }
 
+            // Step 2: make the text uniform, then run the cheap rule extractors on it.
             val normalized = TranscriptNormalizer.normalize(transcript)
             val ruleOutcomes = rules.extract(normalized)
 
+            // Step 3: ask the AI fallback only when the rules found no valid value. Its values are validated too.
             val ai = aiFallback?.takeIf { ruleOutcomes.none { it is Either.Right } }
             val outcomes = if (ai == null) ruleOutcomes else ruleOutcomes + ai.extract(normalized).map { it.validate() }
 
+            // Step 4: split the outcomes into valid values and rejected candidates.
             // One timestamp for the whole transcript: the values were spoken together, so they were observed together.
             val now = clock.instant()
             val extracted = outcomes.filterIsInstance<Either.Right<ExtractedVital>>().map { it.value }
             val rejected = outcomes.filterIsInstance<Either.Left<RejectedCandidate>>().map { it.value }
 
+            // Step 5: turn each value into an observation; the review policy sets its status.
             val observations =
                 extracted.map { vital ->
                     Observation(

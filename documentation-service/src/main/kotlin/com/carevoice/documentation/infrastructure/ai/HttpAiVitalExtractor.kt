@@ -107,12 +107,15 @@ abstract class HttpAiVitalExtractor(
      * Never throws for API problems: any failure gives an empty list.
      */
     override suspend fun extract(normalized: String): List<RawVitalCandidate> {
+        // Step 1: run the extraction and measure how long it took.
         val mark = TimeSource.Monotonic.markNow()
         val result = extractClassified(normalized)
         val outcome = result.outcome
         val elapsed = mark.elapsedNow()
+        // Step 2: count the outcome and record the time in the metrics.
         outcomes.getValue(outcome).increment()
         timers.getValue(outcome).record(elapsed.toJavaDuration())
+        // Step 3: one log line (WARN for errors, INFO otherwise), then return the candidates.
         // httpStatus and apiError say WHY a call failed (e.g. 429 RESOURCE_EXHAUSTED, 400 INVALID_ARGUMENT); they come
         // from the provider's error envelope, never from the answer text, so no transcript content is logged.
         val fields =
@@ -138,7 +141,9 @@ abstract class HttpAiVitalExtractor(
      * and sorts the result into an [Outcome]. Unexpected exceptions become [Outcome.ERROR], not a failed request.
      */
     private suspend fun extractClassified(normalized: String): Classified {
+        // Step 1: an empty text has nothing to extract, so the model is not called.
         if (normalized.isBlank()) return Classified(Outcome.EMPTY)
+        // Step 2: call the model through the breaker, retrying when the failure allows it.
         val guarded =
             try {
                 circuitBreaker.guard(isFailure = { it is Attempt.Failed && it.countsAsFailure }) {
@@ -154,11 +159,14 @@ abstract class HttpAiVitalExtractor(
                 log.event(Level.ERROR, LogType.EXTERNAL_REQUEST, "AI extraction failed unexpectedly", cause = e)
                 return Classified(Outcome.ERROR)
             }
+        // Step 3: an open breaker means no call was made.
         val attempt =
             when (guarded) {
                 Guarded.Rejected -> return Classified(Outcome.CIRCUIT_OPEN)
                 is Guarded.Completed -> guarded.value
             }
+        // Step 4: sort the last attempt. A failure keeps its status; an answer is parsed, and an
+        // answer we cannot read is MALFORMED.
         return when (attempt) {
             is Attempt.Failed ->
                 Classified(attempt.outcome, httpStatus = attempt.httpStatus, apiError = attempt.apiError)
@@ -178,6 +186,7 @@ abstract class HttpAiVitalExtractor(
      * request is wrong. Timeouts count against the breaker but are not retried.
      */
     private suspend fun call(normalized: String): Attempt = try {
+        // Step 1: send the request with the time limits and the provider's headers.
         val response =
             httpClient.post(endpoint) {
                 timeout {
@@ -188,6 +197,7 @@ abstract class HttpAiVitalExtractor(
                 authenticate()
                 setBody(TextContent(requestBody(normalized), ContentType.Application.Json))
             }
+        // Step 2: sort the answer by its HTTP status.
         val status = response.status.value
         when {
             status in 200..299 -> Attempt.Answered(response.bodyAsText())
@@ -213,6 +223,7 @@ abstract class HttpAiVitalExtractor(
     } catch (e: CancellationException) {
         throw e
     } catch (e: Exception) {
+        // Step 3: no answer at all. Sort the transport error (timeout or connection problem).
         when (HttpFailures.classify(e)) {
             TransportFailure.TIMEOUT -> Attempt.Failed(Outcome.TIMEOUT, retryable = false, countsAsFailure = true)
 

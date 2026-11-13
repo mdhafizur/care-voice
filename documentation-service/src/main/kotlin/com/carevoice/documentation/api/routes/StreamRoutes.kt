@@ -24,12 +24,15 @@ import io.ktor.sse.ServerSentEvent
  */
 fun Route.streamRoutes(deps: Dependencies) {
     sse(OBSERVATION_STREAM_PATH) {
+        // Step 1: send a heartbeat comment on a timer, so the connection never looks idle.
         heartbeat {
             period = deps.http.sseHeartbeat
             event = ServerSentEvent(comments = "heartbeat")
         }
+        // Step 2: find out who is calling, and the last event id they saw before a reconnect (if any).
         val caller = call.caller()
         val lastEventId = call.request.header(LAST_EVENT_ID_HEADER)
+        // Step 3: replay what was missed, then send each new observation of the ward as one event.
         deps.observationStream.subscribe(caller, lastEventId).collect { record ->
             send(
                 ServerSentEvent(

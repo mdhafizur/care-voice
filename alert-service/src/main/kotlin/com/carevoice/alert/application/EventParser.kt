@@ -20,6 +20,7 @@ object EventParser {
      * @throws AlertServiceException.UnsupportedSchemaVersion when the event declares a version this code cannot read.
      */
     fun parse(body: String): ObservationRecordedEvent {
+        // Step 1: read the text into a JSON tree. Bad JSON, or JSON that is not an object, is a malformed event.
         val element =
             try {
                 ContractJson.parseToJsonElement(body)
@@ -28,6 +29,8 @@ object EventParser {
             }
         if (element !is JsonObject) throw AlertServiceException.MalformedEvent("the body must be a JSON object")
 
+        // Step 2: check schemaVersion before the full decode, because a newer version may have a shape that cannot
+        // be decoded, and the caller must hear "unsupported version", not "malformed".
         val versionElement = element["schemaVersion"]
         if (versionElement != null) {
             val version =
@@ -35,6 +38,7 @@ object EventParser {
                     ?: throw AlertServiceException.MalformedEvent("schemaVersion must be an integer")
             requireSupported(version)
         }
+        // Step 3: decode the full event. A decode error becomes MalformedEvent with the first line of its message.
         return try {
             ContractJson.decodeFromJsonElement(ObservationRecordedEvent.serializer(), element)
         } catch (e: SerializationException) {

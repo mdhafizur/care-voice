@@ -12,12 +12,15 @@ class GetTranscript(private val transcripts: TranscriptRepository) {
 
     /** Returns the stored result. A malformed id or a transcript from another ward is a 404. */
     suspend fun execute(caller: Caller, transcriptId: String): TranscriptResult {
+        // Step 1: only logged-in staff may read a transcript.
         caller.requireAnyRole()
+        // Step 2: a malformed id is also a 404, so it looks the same as an unknown id.
         val id =
             parseUuid(transcriptId) ?: run {
                 log.event(Level.DEBUG, LogType.BUSINESS, "Transcript not found", "reason" to "malformed-id")
                 throw ApplicationError.NotFound("Transcript", transcriptId)
             }
+        // Step 3: look only inside the caller's ward; a transcript from another ward is a 404 too.
         val record =
             transcripts.findById(caller.tenantId, caller.wardId, id)
                 ?: run {

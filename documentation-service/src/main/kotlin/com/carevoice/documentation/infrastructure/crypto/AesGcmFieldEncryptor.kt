@@ -51,8 +51,11 @@ class AesGcmFieldEncryptor(
      * Throws [DecryptionException] for an unknown key, bad base64, a too-short value or a changed ciphertext.
      */
     override fun decrypt(ciphertext: String): String {
+        // Step 1: the prefix names the key; an unknown key id fails at once.
         val keyId = ciphertext.substringBefore(SEPARATOR, missingDelimiterValue = "")
         val key = keys[keyId] ?: throw DecryptionException("Unknown key id")
+        // Step 2: decode the rest from base64. It must be long enough for the IV and the tag (the integrity
+        // check).
         val bytes =
             try {
                 Base64.getDecoder().decode(ciphertext.substringAfter(SEPARATOR))
@@ -60,9 +63,12 @@ class AesGcmFieldEncryptor(
                 throw DecryptionException("Ciphertext is not valid base64")
             }
         if (bytes.size < IV_BYTES + TAG_BITS / 8) throw DecryptionException("Ciphertext is too short")
+        // Step 3: set up AES-GCM with that key and the IV from the first bytes. The key id is checked too,
+        // as extra authenticated data (AAD).
         val cipher = Cipher.getInstance(TRANSFORMATION)
         cipher.init(Cipher.DECRYPT_MODE, key, GCMParameterSpec(TAG_BITS, bytes, 0, IV_BYTES))
         cipher.updateAAD(keyId.toByteArray(Charsets.UTF_8))
+        // Step 4: decrypt. A changed value fails the tag check and is rejected.
         return try {
             String(cipher.doFinal(bytes, IV_BYTES, bytes.size - IV_BYTES), Charsets.UTF_8)
         } catch (_: AEADBadTagException) {

@@ -59,21 +59,25 @@ class VoyageEmbedder(
      * The answer is sorted by its `index` field, because the order of `data` is not relied on.
      */
     private suspend fun embed(texts: List<String>, inputType: String): List<FloatArray> {
+        // Step 1: build the request: all texts in one call, with the model and the input type.
         val body =
             buildJsonObject {
                 putJsonArray("input") { texts.forEach { add(it) } }
                 put("model", model)
                 put("input_type", inputType)
             }
+        // Step 2: send it with a time limit and the API key as a bearer token (the `Authorization` header).
         val response =
             httpClient.post(endpoint) {
                 timeout { requestTimeoutMillis = timeout.inWholeMilliseconds }
                 header(HttpHeaders.Authorization, "Bearer $apiKey")
                 setBody(TextContent(body.toString(), ContentType.Application.Json))
             }
+        // Step 3: log the answer, and fail on any HTTP status that is not a success.
         val text = response.bodyAsText()
         logProviderResponse("voyage", model, "embed_$inputType", response.status.value, text)
         check(response.status.isSuccess()) { "Voyage embeddings failed with HTTP ${response.status.value}" }
+        // Step 4: read one vector per text, back in the order of the input.
         val data = Json.parseToJsonElement(text).jsonObject.getValue("data").jsonArray
         return data
             .map { it.jsonObject }

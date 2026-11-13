@@ -26,11 +26,14 @@ private const val MAX_LOGGED_PATH = 256
  */
 fun Application.installRequestDeadline(timeout: Duration, exemptPaths: Set<String> = emptySet()) {
     intercept(ApplicationCallPipeline.Plugins) {
+        // Step 1: paths in exemptPaths get no time limit, so they pass straight through.
         val path = call.request.path()
         if (path in exemptPaths) return@intercept
+        // Step 2: run the rest of the request pipeline, and cancel it when the time limit is reached.
         try {
             withTimeout(timeout) { proceed() }
         } catch (e: TimeoutCancellationException) {
+            // Step 3: log the method and a shortened path at WARN, then throw, so the client gets 503 with Retry-After.
             deadlineLog.event(
                 Level.WARN,
                 LogType.REQUEST,

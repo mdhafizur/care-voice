@@ -132,6 +132,7 @@ private fun ApplicationError.logReason(): String = when (this) {
  */
 fun Application.installProblemDetails() {
     install(StatusPages) {
+        // Business errors: one status code per error type, then one log line for all of them.
         exception<ApplicationError> { call, cause ->
             when (cause) {
                 is ApplicationError.BadRequest ->
@@ -220,6 +221,7 @@ fun Application.installProblemDetails() {
                 "cause" to (cause.cause?.javaClass?.simpleName),
             )
         }
+        // HTTP-layer and parsing errors. Parser messages are never sent back, because they can echo the body.
         exception<ApiException> { call, cause ->
             call.respondProblem(cause.status, cause.slug, cause.title, cause.detail, cause.errors)
             call.logRejected(cause.status.value, cause.slug)
@@ -242,6 +244,7 @@ fun Application.installProblemDetails() {
             )
             call.logRejected(HttpStatusCode.BadRequest.value, "malformed-request")
         }
+        // Anything else is a 500 with a fixed message. The full error goes only to the log.
         exception<Throwable> { call, cause ->
             problemLog.event(
                 Level.ERROR,

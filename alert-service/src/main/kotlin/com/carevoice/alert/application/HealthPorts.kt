@@ -49,6 +49,7 @@ class CheckReadiness(private val checks: List<DependencyHealthCheck>) {
      * A check that throws counts as DOWN. Cancellation is passed on.
      */
     suspend fun check(): ReadinessReport {
+        // Step 1: run every dependency check and time it. A check that throws counts as DOWN.
         val results =
             checks.associate { check ->
                 val mark = TimeSource.Monotonic.markNow()
@@ -60,6 +61,7 @@ class CheckReadiness(private val checks: List<DependencyHealthCheck>) {
                     } catch (e: Exception) {
                         false to e
                     }
+                // Step 2: turn the result into UP or DOWN and log it.
                 val state = if (healthy) HealthState.UP else HealthState.DOWN
                 // /readyz runs every few seconds per pod: a healthy, fast check is TRACE (hidden at DEBUG), a
                 // failing or slow one DEBUG. State changes are logged once at INFO/WARN by logIfChanged.
@@ -76,6 +78,7 @@ class CheckReadiness(private val checks: List<DependencyHealthCheck>) {
                 logIfChanged(check.name, state, cause)
                 check.name to state
             }
+        // Step 3: build the report. Ready means: not shutting down and every check is UP.
         if (shuttingDown) log.event(Level.DEBUG, LogType.BUSINESS, "Readiness DOWN: shutting down")
         return ReadinessReport(
             ready = !shuttingDown && results.values.all { it == HealthState.UP },

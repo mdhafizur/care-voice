@@ -28,13 +28,16 @@ data class PageCursor(val direction: Direction, val recordedAt: Instant, val id:
 
         /** Returns null for a malformed cursor (→ 400). A well-formed cursor that matches no row yields the first page. */
         fun decode(raw: String): PageCursor? {
+            // Step 1: reject an empty or too long cursor. Every bad cursor gives null, not an error.
             if (raw.isEmpty() || raw.length > MAX_LENGTH) return null
+            // Step 2: decode the base64url text (a URL-safe way to write bytes as letters and digits).
             val text =
                 try {
                     String(Base64.getUrlDecoder().decode(raw), Charsets.UTF_8)
                 } catch (_: IllegalArgumentException) {
                     return null
                 }
+            // Step 3: split it into direction, time and id, and check each part.
             val parts = text.split('|')
             if (parts.size != 3) return null
             val direction = Direction.entries.firstOrNull { it.code == parts[0] } ?: return null

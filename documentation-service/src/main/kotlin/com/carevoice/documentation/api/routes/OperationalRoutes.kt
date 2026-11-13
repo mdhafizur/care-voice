@@ -14,6 +14,7 @@ import io.ktor.server.routing.get
 
 /** Unauthenticated operational endpoints: health, metrics, the OpenAPI spec and Swagger UI. */
 fun Route.operationalRoutes(deps: Dependencies) {
+    // Liveness: answers UP while the process runs.
     get("/livez") {
         call.respondJson(HealthResponse.serializer(), HealthResponse("UP"))
     }
@@ -31,10 +32,12 @@ fun Route.operationalRoutes(deps: Dependencies) {
         )
     }
 
+    // Metrics for Prometheus to collect.
     get("/metrics") {
         call.respondText(deps.meterRegistry.scrape(), ContentType.parse(PROMETHEUS_CONTENT_TYPE))
     }
 
+    // API description (OpenAPI file) and the Swagger UI page that shows it.
     val spec: String by lazy {
         requireNotNull(Dependencies::class.java.classLoader.getResource(OPENAPI_RESOURCE)) {
             "$OPENAPI_RESOURCE missing"

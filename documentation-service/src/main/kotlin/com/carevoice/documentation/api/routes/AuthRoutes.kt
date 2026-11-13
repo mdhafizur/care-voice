@@ -22,6 +22,7 @@ import kotlin.time.Duration.Companion.minutes
  */
 fun Route.authRoutes(deps: Dependencies) {
     post("/v1/auth/token") {
+        // Step 1: limit login attempts per client IP, so nobody can guess passwords quickly.
         val ip = call.clientAddress(deps.http.trustedProxies)
         when (
             val decision = deps.rateLimiter.tryAcquire(
@@ -34,8 +35,10 @@ fun Route.authRoutes(deps: Dependencies) {
             is RateLimitDecision.Rejected -> throw ApplicationError.TooManyRequests(decision.retryAfter)
             is RateLimitDecision.Allowed -> Unit
         }
+        // Step 2: read the body and check the username and password.
         val request = call.receiveJson(TokenRequest.serializer(), deps.http.maxBodyBytes)
         val token = deps.authenticateUser.execute(request.username, request.password)
+        // Step 3: send the signed token, its type and how many seconds it stays valid.
         call.respondJson(
             TokenResponse.serializer(),
             TokenResponse(token.accessToken, "Bearer", token.expiresIn.inWholeSeconds),

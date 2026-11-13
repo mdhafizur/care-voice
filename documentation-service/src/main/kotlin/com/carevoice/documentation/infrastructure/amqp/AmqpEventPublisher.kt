@@ -201,6 +201,7 @@ class AmqpEventPublisher(
      * Only a channel whose publish was confirmed goes back to the pool; any other channel is closed.
      */
     private suspend fun send(message: AmqpMessage): PublishResult {
+        // Step 1: borrow a channel. When the broker cannot be reached, the publish can be retried later.
         val pooled =
             try {
                 borrow()
@@ -215,6 +216,8 @@ class AmqpEventPublisher(
                 )
                 return PublishResult.Retryable("broker unreachable: ${e::class.simpleName}")
             }
+        // Step 2: publish and wait for the broker's confirm (its answer that it has taken the message).
+        // The channel counts as healthy only when the message was published.
         var healthy = false
         try {
             val mark = TimeSource.Monotonic.markNow()
@@ -237,6 +240,7 @@ class AmqpEventPublisher(
         } catch (e: Exception) {
             return PublishResult.Retryable("publish failed: ${e::class.simpleName}")
         } finally {
+            // Step 3: a healthy channel goes back to the pool; any other one is closed.
             // Closing is a blocking RPC; it must run off the caller's thread and even when the caller was cancelled.
             withContext(NonCancellable + Dispatchers.IO) { if (healthy) release(pooled) else pooled.closeQuietly() }
         }
@@ -267,12 +271,16 @@ class AmqpEventPublisher(
      * instead of each opening its own connection.
      */
     private suspend fun connection(): Connection {
+        // Step 1: fast path: an open connection is used as it is, without the lock.
         connection?.takeIf { it.isOpen }?.let { return it }
+        // Step 2: take the lock and check again, because another worker may have connected while we waited.
         return connectLock.withLock {
             check(!closed) { "AmqpEventPublisher is closed" }
             connection?.takeIf { it.isOpen }?.let { return@withLock it }
             // A connection that is not open but exists is recovering automatically; a second one would leak.
             connection?.let { throw IllegalStateException("connection is recovering") }
+            // Step 3: open a new connection and declare the exchanges on it. On failure the half-open
+            // connection is aborted, so it does not leak.
             runInterruptible(Dispatchers.IO) {
                 val opened = factory.newConnection(CONNECTION_NAME)
                 try {
@@ -406,6 +414,7 @@ object AmqpMessages {
      * and the stored payload as the body, unchanged.
      */
     fun toMessage(event: OutboxEvent, clock: Clock = Clock.systemUTC()): AmqpMessage {
+        // Step 1: the headers: schema version, and the request id and trace context when the event has them.
         val headers =
             buildMap<String, Any> {
                 put(
@@ -415,6 +424,8 @@ object AmqpMessages {
                 EventEnvelope.requestIdOf(event)?.let { put(HEADER_REQUEST_ID, it) }
                 EventEnvelope.traceparentOf(event)?.let { put(HEADER_TRACEPARENT, it) }
             }
+        // Step 2: the message properties: JSON, persistent (the broker keeps it on disk) and the event id as
+        // message id.
         val properties =
             AMQP.BasicProperties
                 .Builder()
@@ -428,6 +439,7 @@ object AmqpMessages {
                 .appId("documentation-service")
                 .headers(headers)
                 .build()
+        // Step 3: put it together for the events exchange with the versioned routing key.
         // The payload was serialised once, with ContractJson, when the observation was committed; it is sent byte
         // for byte, never re-encoded, so HTTP and AMQP consumers see identical JSON.
         return AmqpMessage(

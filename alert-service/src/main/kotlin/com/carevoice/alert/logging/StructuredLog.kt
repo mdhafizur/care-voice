@@ -34,15 +34,20 @@ fun Logger.event(
     vararg fields: Pair<String, Any?>,
     cause: Throwable? = null,
 ) {
+    // Step 1: stop early when this level is off, so no work is done for a line nobody sees.
     if (!isEnabledForLevel(level)) return
+    // Step 2: put the log type into the MDC (values added to every log line), and remember
+    // the old value.
     val previousType = MDC.get(TYPE_KEY)
     if (type != null) MDC.put(TYPE_KEY, type.value)
     try {
+        // Step 3: add the fields and the error, then write the line.
         var builder = atLevel(level)
         for ((key, value) in fields) builder = builder.addKeyValue(key, value)
         if (cause != null) builder = builder.setCause(cause)
         builder.log(message)
     } finally {
+        // Step 4: put the old log type back, so the caller's MDC is unchanged.
         if (type != null) {
             if (previousType == null) MDC.remove(TYPE_KEY) else MDC.put(TYPE_KEY, previousType)
         }

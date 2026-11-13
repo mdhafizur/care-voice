@@ -47,14 +47,19 @@ class AcknowledgeAlert(private val alerts: AlertRepository, private val clock: C
         precondition: VersionPrecondition?,
         acknowledgedBy: String,
     ): Alert {
+        // Step 1: find the alert in the caller's ward (404 when it is not there).
         val current = alerts.findById(scope, alertId) ?: throw AlertServiceException.AlertNotFound(alertId)
+        // Step 2: `If-Match` must be sent (428) and must name the current version (412).
         if (precondition == null) throw AlertServiceException.PreconditionRequired()
         if (!precondition.matches(current.version)) throw AlertServiceException.PreconditionFailed(alertId)
+        // Step 3: an alert can be acknowledged only once (409).
         if (current.isAcknowledged) throw AlertServiceException.AlreadyAcknowledged(alertId)
 
+        // Step 4: write with one conditional update. If another lead was faster, `lostRace` picks the error.
         val now = clock.instant().truncatedTo(ChronoUnit.MILLIS)
         val acknowledged = alerts.acknowledge(scope, alertId, current.version, acknowledgedBy, now)
             ?: throw lostRace(scope, alertId)
+        // Step 5: log the business event and return the alert with its new version.
         log.event(
             Level.INFO,
             LogType.BUSINESS,

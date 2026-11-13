@@ -58,7 +58,9 @@ fun FieldError.toDto(): FieldErrorDto = FieldErrorDto(field, message)
 
 /** `?limit=` and `?cursor=` → [PageRequest]; anything malformed is a 400 with field errors. */
 fun pageRequestOf(limit: String?, cursor: String?): PageRequest {
+    // Step 1: collect all problems in one list, so the client sees every bad parameter at once.
     val errors = mutableListOf<FieldError>()
+    // Step 2: no limit means the default. A limit that is not a number in range is an error.
     val parsedLimit =
         when {
             limit == null -> PageLimits.DEFAULT
@@ -69,6 +71,7 @@ fun pageRequestOf(limit: String?, cursor: String?): PageRequest {
                     PageLimits.DEFAULT
                 }
         }
+    // Step 3: decode the cursor (a token that marks where the last page ended).
     val parsedCursor =
         cursor?.let {
             PageCursor.decode(it) ?: run {
@@ -76,6 +79,7 @@ fun pageRequestOf(limit: String?, cursor: String?): PageRequest {
                 null
             }
         }
+    // Step 4: reject the request if anything was wrong.
     if (errors.isNotEmpty()) throw ApplicationError.BadRequest("The request has invalid parameters.", errors)
     return PageRequest(parsedLimit, parsedCursor)
 }
@@ -86,7 +90,9 @@ fun pageRequestOf(limit: String?, cursor: String?): PageRequest {
  * use case's 422.
  */
 fun ObservationFilterRequest.toQuery(): Pair<ObservationFilter, PageRequest> {
+    // Step 1: collect all problems in one list, so the client sees every bad field at once.
     val errors = mutableListOf<FieldError>()
+    // Step 2: map the vital type and status names. An unknown name is an error.
     val types =
         vitalTypes.orEmpty().mapNotNull { raw ->
             VitalType.entries.firstOrNull { it.name == raw } ?: run {
@@ -101,6 +107,7 @@ fun ObservationFilterRequest.toQuery(): Pair<ObservationFilter, PageRequest> {
                 null
             }
         }
+    // Step 3: check the resident ids: not too many, and each one well formed.
     val residents = residentIds.orEmpty()
     if (residents.size >
         MAX_FILTER_VALUES
@@ -111,6 +118,7 @@ fun ObservationFilterRequest.toQuery(): Pair<ObservationFilter, PageRequest> {
         errors +=
             FieldError("residentIds", "contains a malformed resident id")
     }
+    // Step 4: parse the time range and the paging values. Paging errors join the same list.
     val from = instantOrError("recordedFrom", recordedFrom, errors)
     val to = instantOrError("recordedTo", recordedTo, errors)
     val page =
@@ -120,6 +128,7 @@ fun ObservationFilterRequest.toQuery(): Pair<ObservationFilter, PageRequest> {
             errors += e.errors
             PageRequest()
         }
+    // Step 5: reject the request if anything was wrong. Otherwise build the filter and the page.
     if (errors.isNotEmpty()) throw ApplicationError.BadRequest("The filter is invalid.", errors)
     return ObservationFilter(residents.toSet(), types.toSet(), parsedStatus, from, to) to page
 }

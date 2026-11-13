@@ -71,11 +71,15 @@ fun Route.alertServiceRoutes(api: AlertApi) {
 private fun Route.eventRoutes(api: AlertApi) {
     val slots = Semaphore(api.eventConcurrency)
     post {
+        // Step 1: read the request body.
         val body = call.receiveJsonText()
+        // Step 2: take a free processing slot, or answer 503 at once when all are busy (see above).
         if (!slots.tryAcquire()) throw ApiException.Overloaded()
         try {
+            // Step 3: parse and process the event; `finally` always gives the slot back.
             val event = EventParser.parse(body)
             val result = api.processObservationEvent.execute(event)
+            // Step 4: a duplicate event answers 200, a new one 202 (accepted).
             val status = if (result.duplicate) HttpStatusCode.OK else HttpStatusCode.Accepted
             call.respondText(
                 ApiJson.encodeToString(EventAcceptedDto.serializer(), AlertDtoMapper.toDto(result)),
@@ -94,7 +98,9 @@ private fun Route.eventRoutes(api: AlertApi) {
  * List, get and acknowledge send an ETag (a version tag of the body), so clients can check for changes cheaply.
  */
 private fun Route.alertRoutes(api: AlertApi) {
+    // List alerts.
     get {
+        // Step 1: check `status` and `limit`, and collect every problem, so one 400 lists them all.
         val query = call.request.queryParameters
         val violations = mutableListOf<FieldViolation>()
         val status =
@@ -111,13 +117,16 @@ private fun Route.alertRoutes(api: AlertApi) {
             throw ApiException.BadRequest("One or more request parameters are invalid.", violations)
         }
 
+        // Step 2: load one page of alerts from the caller's ward.
         val page = api.listAlerts.execute(call.caller.scope, status, limit, query["cursor"])
         val json = ApiJson.encodeToString(AlertPageDto.serializer(), AlertDtoMapper.toDto(page))
+        // Step 3: add the total count and the paging links (`Link` header), then send the page with an ETag.
         call.response.header("X-Total-Count", page.totalCount.toString())
         call.response.header(HttpHeaders.Link, linkHeader(status, limit, page.nextCursor, page.prevCursor))
         call.respondJsonWithETag(json, weakETagOf(json))
     }
 
+    // Get one alert.
     get("/{alertId}") {
         val alert = api.getAlert.execute(call.caller.scope, call.alertId())
         val json = ApiJson.encodeToString(AlertDto.serializer(), AlertDtoMapper.toDto(alert))
@@ -133,6 +142,7 @@ private fun Route.alertRoutes(api: AlertApi) {
         )
     }
 
+    // Acknowledge an alert. `If-Match` must name the version the client saw.
     patch("/{alertId}/acknowledge") {
         val alert =
             api.acknowledgeAlert.execute(
@@ -166,12 +176,14 @@ internal fun linkHeader(status: AlertStatus?, limit: Int, nextCursor: String?, p
 
 /** Health, metrics and API docs: no authentication (docs/CONTRACTS.md, section 6). */
 private fun Route.operationsRoutes(api: AlertApi) {
+    // Liveness: the process is running. It does not check any dependency.
     get("/livez") {
         call.respondText(
             ApiJson.encodeToString(HealthDto.serializer(), HealthDto("UP", emptyMap())),
             ContentType.Application.Json,
         )
     }
+    // Readiness: can this pod take traffic now? Not ready gives 503 and a `Retry-After`.
     get("/readyz") {
         val report = api.readiness.check()
         val status = if (report.ready) HttpStatusCode.OK else HttpStatusCode.ServiceUnavailable
@@ -185,6 +197,7 @@ private fun Route.operationsRoutes(api: AlertApi) {
     get("/metrics") {
         call.respondText(api.scrapeMetrics(), PROMETHEUS_CONTENT_TYPE)
     }
+    // API description (OpenAPI) and the Swagger UI page that shows it.
     get("/openapi.yaml") {
         val spec =
             AlertApi::class.java.classLoader

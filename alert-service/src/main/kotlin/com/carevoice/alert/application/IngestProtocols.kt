@@ -30,8 +30,10 @@ class IngestProtocols(
      * Only when they differ does it embed the chunks and replace the stored corpus.
      */
     suspend fun execute(): IngestResult {
+        // Step 1: read the protocol documents and cut them into chunks (small pieces of text).
         val documents = source.documents()
         val chunks = documents.flatMap { ProtocolChunker.chunk(it.id, it.markdown) }
+        // Step 2: the version is a SHA-256 hash of the model name and all chunks. Compare it with the stored one.
         val version = versionOf(embedder.model, chunks.map { it.id + "\u0001" + it.text })
         val stored = repository.corpusVersion(embedder.model)
         log.event(
@@ -45,10 +47,13 @@ class IngestProtocols(
             "storedVersion" to stored?.take(12),
             "reembed" to (stored != version),
         )
+        // Step 3: nothing changed, so skip the slow embedding work.
         if (stored == version) return IngestResult(chunks.size, changed = false)
 
+        // Step 4: turn each chunk into a vector (a list of numbers for similarity search), in batches.
         val vectors = chunks.chunked(BATCH_SIZE).flatMap { batch -> embedder.embedDocuments(batch.map { it.text }) }
         check(vectors.size == chunks.size) { "embedder returned ${vectors.size} vectors for ${chunks.size} chunks" }
+        // Step 5: replace the whole stored corpus with the new chunks and their vectors.
         repository.replaceCorpus(embedder.model, version, chunks.zip(vectors) { chunk, v -> EmbeddedChunk(chunk, v) })
         return IngestResult(chunks.size, changed = true)
     }

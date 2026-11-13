@@ -186,6 +186,7 @@ private class ConfigLoader(private val env: Map<String, String>) {
      * The read replica, when `DATABASE_READ_URL` is set, reuses the primary's user and password unless its own are set.
      */
     fun load(): AppConfig {
+        // Primary database and the optional read replica (a read-only copy).
         val database = database()
         val readDatabase =
             jdbcUrl("DATABASE_READ_URL", required = false)?.let { url ->
@@ -195,16 +196,20 @@ private class ConfigLoader(private val env: Map<String, String>) {
                     password = optional("DATABASE_READ_PASSWORD") ?: database.password,
                 )
             }
+        // Event transport: only the URL of the chosen transport is required.
         val transport = eventTransport()
         val alertServiceUrl = httpUrl("ALERT_SERVICE_URL", required = transport == EventTransport.HTTP)
         val rabbitmqUrl = uri("RABBITMQ_URL", setOf("amqp", "amqps"), required = transport == EventTransport.AMQP)
+        // AI fallback: its API key is required only when it is turned on.
         val aiEnabled = boolean("AI_FALLBACK_ENABLED", default = false)
         val aiProvider = aiProvider()
         val apiKeyName = if (aiProvider == AiProvider.GEMINI) "GEMINI_API_KEY" else "ANTHROPIC_API_KEY"
         val apiKey = if (aiEnabled) required(apiKeyName) else optional(apiKeyName)
+        // Demo data: a password is required only when seeding is turned on.
         val demoEnabled = boolean("DEMO_SEED_ENABLED", default = false)
         val demoPassword = if (demoEnabled) demoPassword() else optional("DEMO_PASSWORD")
 
+        // Build the config. Settings that need no check across values are read right here.
         val config =
             AppConfig(
                 httpPort = int("HTTP_PORT", default = 8080, range = 1..65_535),
@@ -367,10 +372,13 @@ private class ConfigLoader(private val env: Map<String, String>) {
      * a rotation go in `DATA_ENCRYPTION_PREVIOUS_KEYS` as `id:base64,id:base64`.
      */
     private fun encryption(): EncryptionConfig {
+        // Step 1: the id of the active key, which must have a valid form.
         val activeId = optional("DATA_ENCRYPTION_KEY_ID") ?: "v1"
         if (!KEY_ID.matches(activeId)) errors += "DATA_ENCRYPTION_KEY_ID must match ${KEY_ID.pattern}"
+        // Step 2: the active key goes into the map first, under that id.
         val keys = linkedMapOf<String, ByteArray>()
         decodeKey("DATA_ENCRYPTION_KEY", required("DATA_ENCRYPTION_KEY"))?.let { keys[activeId] = it }
+        // Step 3: add each retired key (`id:base64`). A bad entry or a repeated id is recorded as an error.
         optional("DATA_ENCRYPTION_PREVIOUS_KEYS")?.split(',')?.map {
             it.trim()
         }?.filter { it.isNotEmpty() }?.forEach { entry ->

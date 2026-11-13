@@ -67,6 +67,7 @@ private val authLog = LoggerFactory.getLogger("com.carevoice.alert.api.Authentic
 fun AuthenticationConfig.configureJwt(settings: JwtSettings) {
     jwt(JWT_AUTH) {
         realm = REALM
+        // Accept only tokens signed with our secret, from our issuer and for our audience.
         verifier(
             JWT
                 .require(Algorithm.HMAC256(settings.secret))
@@ -75,6 +76,8 @@ fun AuthenticationConfig.configureJwt(settings: JwtSettings) {
                 .acceptLeeway(LEEWAY_SECONDS)
                 .build(),
         )
+        // Turn the token claims into a caller. A missing subject, tenant, ward or expiry rejects the
+        // token (null); unknown role names are dropped.
         validate { credential ->
             val payload = credential.payload
             val subject = payload.subject?.takeIf { it.isNotBlank() }
@@ -92,6 +95,7 @@ fun AuthenticationConfig.configureJwt(settings: JwtSettings) {
                 CallerPrincipal(subject, tenant, ward, roles)
             }
         }
+        // Answer 401 when the request has no valid token.
         challenge { _, _ ->
             // Missing vs refused token (bad signature, expired, wrong audience, missing claims); never the token.
             val reason =

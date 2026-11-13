@@ -48,6 +48,7 @@ val PER_USER_RATE_LIMIT = RateLimitName("per-user")
  * behaviour does not depend on library defaults.
  */
 fun Application.installHttpPlugins(jwt: JwtSettings, rateLimitPerMinute: Int, registry: MeterRegistry) {
+    // Request id: take X-Request-Id from the caller or make a new one, and send it back in the answer.
     install(CallId) {
         retrieveFromHeader(HttpHeaders.XRequestId)
         generate { UUID.randomUUID().toString() }
@@ -63,12 +64,14 @@ fun Application.installHttpPlugins(jwt: JwtSettings, rateLimitPerMinute: Int, re
         mdc("spanId") { currentSpanContext()?.second }
         filter { false }
     }
+    // Access log, safe default headers, and no caching of answers unless a route sets Cache-Control.
     install(AccessLog)
     install(DefaultHeaders) {
         header("X-Content-Type-Options", "nosniff")
         header("Referrer-Policy", "no-referrer")
     }
     install(DefaultNoStore)
+    // Error answers, the JWT login check and a rate limit per user.
     installStatusPages()
     install(Authentication) { configureJwt(jwt) }
     install(RateLimit) {
@@ -77,6 +80,7 @@ fun Application.installHttpPlugins(jwt: JwtSettings, rateLimitPerMinute: Int, re
             requestKey { call -> call.rateLimitKey() }
         }
     }
+    // Metrics: request time histograms plus JVM and process metrics.
     install(MicrometerMetrics) {
         this.registry = registry
         distributionStatisticConfig =

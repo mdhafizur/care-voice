@@ -61,7 +61,9 @@ object GuidanceHttpClient {
 
     /** The LLM guidance writer selected by `AI_PROVIDER`, or null when `GUIDANCE_AI_ENABLED` is false. */
     fun writer(config: GuidanceConfig, httpClient: HttpClient, registry: MeterRegistry): GuidanceWriter? {
+        // Step 1: no writer when AI is turned off in the config.
         if (!config.aiEnabled) return null
+        // Step 2: build the writer for the chosen AI provider.
         val writer =
             when (config.aiProvider) {
                 GuidanceConfig.AiProvider.CLAUDE ->
@@ -77,6 +79,7 @@ object GuidanceHttpClient {
                         httpClient,
                     )
             }
+        // Step 3: add metrics and a circuit breaker (it stops calling a provider that keeps failing, for a while).
         return CircuitBreakingGuidanceWriter(
             InstrumentedGuidanceWriter(writer, registry),
             GuidanceCircuitBreakers.create(GuidanceCircuitBreakers.WRITER, registry),

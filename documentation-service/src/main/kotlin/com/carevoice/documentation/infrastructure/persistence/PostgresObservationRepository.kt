@@ -87,8 +87,10 @@ class PostgresObservationRepository(private val dataSource: DataSource) : Observ
         filter: ObservationFilter,
         page: PageRequest,
     ): Page<ObservationRecord> = withReadConnection(dataSource) { connection ->
+        // Step 1: every query stays inside the caller's tenant (care provider) and ward.
         val conditions = mutableListOf("tenant_id = ?", "ward_id = ?")
         val params = mutableListOf<Any?>(tenantId, wardId)
+        // Step 2: add the filters. `= ANY(?)` matches any value of a list sent as one array parameter.
         if (filter.residentIds.isNotEmpty()) {
             conditions += "resident_id = ANY(?)"
             params += TextArray(filter.residentIds)
@@ -109,6 +111,7 @@ class PostgresObservationRepository(private val dataSource: DataSource) : Observ
             conditions += "recorded_at <= ?"
             params += it
         }
+        // Step 3: read one keyset page (paging from the last row seen, not by an offset).
         keysetPage(connection, Where(conditions, params), page)
     }
 
@@ -181,13 +184,17 @@ class PostgresObservationRepository(private val dataSource: DataSource) : Observ
      * A cursor whose row is not in this scope is ignored, so the first page is returned.
      */
     private fun keysetPage(connection: Connection, where: Where, page: PageRequest): Page<ObservationRecord> {
+        // Step 1: count all rows that match, for the total count.
         val total =
             connection.queryOne("SELECT count(*) FROM observations WHERE ${where.sql}", where.params) { it.getLong(1) }
                 ?: 0L
+        // Step 2: check the cursor (the marker of where the last page ended), and ask for one row more than
+        // the page size, so we know whether a further page exists.
         // A well-formed cursor that points at no row in this scope (deleted, other ward, forged) → first page.
         val cursor = page.cursor?.takeIf { cursorExists(connection, where, it) }
         val fetch = page.limit + 1
 
+        // Step 3: first page or going forward: newest first, older than the cursor row.
         if (cursor == null || cursor.direction == PageCursor.Direction.AFTER) {
             val conditions = if (cursor == null) where.sql else "${where.sql} AND (recorded_at, id) < (?, ?)"
             val params = if (cursor == null) where.params else where.params + listOf(cursor.recordedAt, cursor.id)
@@ -212,6 +219,7 @@ class PostgresObservationRepository(private val dataSource: DataSource) : Observ
             )
         }
 
+        // Step 4: going back: read the newer rows oldest first, then reverse them to newest first.
         val rows =
             connection.queryList(
                 "$SELECT_SQL WHERE ${where.sql} AND (recorded_at, id) > (?, ?) ORDER BY recorded_at ASC, id ASC LIMIT ?",

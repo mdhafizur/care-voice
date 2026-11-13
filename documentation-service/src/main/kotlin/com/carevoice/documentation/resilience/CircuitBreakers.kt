@@ -70,7 +70,10 @@ sealed interface Guarded<out T> {
  * anything, otherwise shutting down the service could open the breaker.
  */
 suspend fun <T> CircuitBreaker.guard(isFailure: (T) -> Boolean, block: suspend () -> T): Guarded<T> {
+    // Step 1: ask the breaker for permission. While it is open, the call is not made at all.
     if (!tryAcquirePermission()) return Guarded.Rejected
+    // Step 2: run the call and time it. An exception counts as a failure. A cancel is not a failure, so the
+    // permission is only given back.
     val start = System.nanoTime()
     val value =
         try {
@@ -82,6 +85,7 @@ suspend fun <T> CircuitBreaker.guard(isFailure: (T) -> Boolean, block: suspend (
             onError(System.nanoTime() - start, TimeUnit.NANOSECONDS, e)
             throw e
         }
+    // Step 3: a returned value can also count as a failure (isFailure). Report failure or success to the breaker.
     val elapsed = System.nanoTime() - start
     if (isFailure(value)) {
         onError(elapsed, TimeUnit.NANOSECONDS, FailedResult)

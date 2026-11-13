@@ -67,6 +67,7 @@ fun Application.installJwtAuthentication(config: JwtConfig, clock: Clock) {
         jwt(JWT_AUTH) {
             realm = "carevoice"
             verifier(tokenVerifier)
+            // validate: runs after the verifier has accepted the token. It turns the claims into the caller.
             validate { credential ->
                 val payload = credential.payload
 
@@ -75,6 +76,7 @@ fun Application.installJwtAuthentication(config: JwtConfig, clock: Clock) {
                     authLog.event(Level.DEBUG, LogType.REQUEST, "Token refused: claim missing", "claim" to claim)
                     return null
                 }
+                // Read the required claims: subject (the user), tenant and ward.
                 val subject = payload.subject?.takeIf { it.isNotBlank() } ?: return@validate missing("sub")
                 val tenant =
                     payload.getClaim(JwtClaims.TENANT).asString()?.takeIf { it.isNotBlank() }
@@ -82,11 +84,13 @@ fun Application.installJwtAuthentication(config: JwtConfig, clock: Clock) {
                 val ward =
                     payload.getClaim(JwtClaims.WARD).asString()?.takeIf { it.isNotBlank() }
                         ?: return@validate missing(JwtClaims.WARD)
+                // Roles are optional. Unknown role names are dropped.
                 val roles = payload.getClaim(
                     JwtClaims.ROLES,
                 ).asList(String::class.java)?.mapNotNull(Role::parse)?.toSet().orEmpty()
                 CallerPrincipal(Caller(subject, tenant, ward, roles))
             }
+            // challenge: runs when no valid token was found. It logs why and answers 401 Unauthorized.
             challenge { _, _ ->
                 // Missing vs refused token (bad signature, expired, wrong audience, missing claims). The token itself
                 // is never logged.

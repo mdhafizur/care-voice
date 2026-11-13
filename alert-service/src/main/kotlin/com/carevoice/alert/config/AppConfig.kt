@@ -131,6 +131,7 @@ private class ConfigLoader(private val env: Map<String, String>) {
 
     /** Reads and checks every value; throws ConfigException with all errors when anything is missing or invalid. */
     fun load(): AppConfig {
+        // HTTP port and MongoDB.
         val httpPort = int("HTTP_PORT", AppConfig.DEFAULT_HTTP_PORT, 1..65_535)
         val mongoUri = required("MONGO_URI")
         if (mongoUri != null && !mongoUri.startsWith("mongodb://") && !mongoUri.startsWith("mongodb+srv://")) {
@@ -143,6 +144,7 @@ private class ConfigLoader(private val env: Map<String, String>) {
         val mongoPoolSize = int("MONGO_POOL_SIZE", AppConfig.DEFAULT_MONGO_POOL_SIZE, 1..500)
         val migrateOnStartup = boolean("MONGO_MIGRATE_ON_STARTUP", default = true)
 
+        // Login tokens (JWT): the secret must be long enough.
         val jwtSecret = required("JWT_SECRET")?.toByteArray(Charsets.UTF_8)
         if (jwtSecret != null && jwtSecret.size < AppConfig.MIN_JWT_SECRET_BYTES) {
             errors += "JWT_SECRET must be at least ${AppConfig.MIN_JWT_SECRET_BYTES} bytes"
@@ -150,6 +152,7 @@ private class ConfigLoader(private val env: Map<String, String>) {
         val jwtIssuer = optional("JWT_ISSUER") ?: AppConfig.DEFAULT_JWT_ISSUER
         val jwtAudience = optional("JWT_AUDIENCE") ?: AppConfig.DEFAULT_JWT_AUDIENCE
 
+        // RabbitMQ (the message broker), limits, timeouts and guidance.
         val rabbitUrl = required("RABBITMQ_URL")
         if (rabbitUrl != null) validateAmqpUrl(rabbitUrl)
         val prefetch = int("RABBITMQ_PREFETCH", AppConfig.DEFAULT_RABBITMQ_PREFETCH, 1..1_000)
@@ -157,6 +160,7 @@ private class ConfigLoader(private val env: Map<String, String>) {
         val requestTimeoutMs = int("REQUEST_TIMEOUT_MS", 30_000, 1_000..120_000)
         val guidance = guidance()
 
+        // Report every problem at once. After this check every value is set, so the `!!` below are safe.
         if (errors.isNotEmpty()) throw ConfigException(errors.toList())
         return AppConfig(
             httpPort = httpPort!!,
@@ -174,6 +178,7 @@ private class ConfigLoader(private val env: Map<String, String>) {
      * An unknown name is recorded as an error and a default is kept, so loading goes on and finds more errors.
      */
     private fun guidance(): GuidanceConfig {
+        // Embedder: the service that turns text into vectors (lists of numbers) for the protocol search.
         val embedder =
             when (optional("GUIDANCE_EMBEDDER")?.lowercase()) {
                 null, "hashing" -> GuidanceConfig.EmbedderKind.HASHING
@@ -190,6 +195,7 @@ private class ConfigLoader(private val env: Map<String, String>) {
         if (embedder == GuidanceConfig.EmbedderKind.VOYAGE && voyageApiKey == null) {
             errors += "VOYAGE_API_KEY is required when GUIDANCE_EMBEDDER=voyage"
         }
+        // Writer: whether generated guidance is on, which provider writes it, and its key.
         val aiEnabled = boolean("GUIDANCE_AI_ENABLED", default = false) ?: false
         val aiProvider =
             when (optional("AI_PROVIDER")?.lowercase()) {
@@ -201,12 +207,14 @@ private class ConfigLoader(private val env: Map<String, String>) {
         if (aiEnabled && aiProvider == GuidanceConfig.AiProvider.CLAUDE && anthropicApiKey == null) {
             errors += "ANTHROPIC_API_KEY is required when GUIDANCE_AI_ENABLED=true"
         }
+        // Gemini key: needed when Gemini embeds or writes.
         val geminiApiKey = optional("GEMINI_API_KEY")
         val geminiWrites = aiEnabled && aiProvider == GuidanceConfig.AiProvider.GEMINI
         val geminiNeeded = embedder == GuidanceConfig.EmbedderKind.GEMINI || geminiWrites
         if (geminiNeeded && geminiApiKey == null) {
             errors += "GEMINI_API_KEY is required when GUIDANCE_EMBEDDER=gemini or AI_PROVIDER=gemini"
         }
+        // Model names fall back to their defaults when they are not set.
         return GuidanceConfig(
             embedder = embedder,
             voyageApiKey = voyageApiKey,
