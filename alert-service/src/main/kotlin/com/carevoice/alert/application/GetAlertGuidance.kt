@@ -1,6 +1,7 @@
 package com.carevoice.alert.application
 
 import com.carevoice.alert.domain.WardScope
+import com.carevoice.alert.domain.guidance.EmbeddedChunk
 import com.carevoice.alert.domain.guidance.GuidanceQuery
 import com.carevoice.alert.domain.guidance.RetrievalQuery
 import com.carevoice.alert.domain.guidance.Retriever
@@ -49,22 +50,7 @@ class GetAlertGuidance(
             GuidanceQuery
                 .forAlert(alert)
                 .sortedBy { if (it.aspect == RetrievalQuery.Aspect.REVIEW) 0 else 1 }
-                .flatMap { query ->
-                    Retriever.bestProtocol(embed(query.text), corpus, embedder.minScore).also { hits ->
-                        log.event(
-                            Level.DEBUG,
-                            LogType.BUSINESS,
-                            "Protocol retrieved",
-                            "alertId" to alertId,
-                            "aspect" to query.aspect.name,
-                            "protocol" to hits.firstOrNull()?.chunk?.documentId,
-                            "topScore" to hits.maxOfOrNull { it.score },
-                            "sections" to hits.size,
-                            "minScore" to embedder.minScore,
-                            "corpusChunks" to corpus.size,
-                        )
-                    }
-                }
+                .flatMap { query -> retrieve(query, corpus, alertId) }
                 .distinctBy { it.chunk.id }
         // Step 3: no section scored high enough, so answer NO_MATCHING_PROTOCOL instead of guessing.
         if (sources.isEmpty()) {
@@ -97,6 +83,28 @@ class GetAlertGuidance(
             "protocols" to sources.map { it.chunk.documentId }.distinct().joinToString(","),
         )
         return AlertGuidance(alert, GuidanceStatus.FOUND, generator, steps, sources)
+    }
+
+    /** Finds the best-matching protocol for one query (empty when none scores high enough) and logs the result. */
+    private suspend fun retrieve(
+        query: RetrievalQuery,
+        corpus: List<EmbeddedChunk>,
+        alertId: String,
+    ): List<ScoredChunk> {
+        val hits = Retriever.bestProtocol(embed(query.text), corpus, embedder.minScore)
+        log.event(
+            Level.DEBUG,
+            LogType.BUSINESS,
+            "Protocol retrieved",
+            "alertId" to alertId,
+            "aspect" to query.aspect.name,
+            "protocol" to hits.firstOrNull()?.chunk?.documentId,
+            "topScore" to hits.maxOfOrNull { it.score },
+            "sections" to hits.size,
+            "minScore" to embedder.minScore,
+            "corpusChunks" to corpus.size,
+        )
+        return hits
     }
 
     /** Embeds a query; a failing embedding service becomes DependencyUnavailable (503). Cancellation is passed on. */

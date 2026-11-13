@@ -42,11 +42,15 @@ object EventParser {
         return try {
             ContractJson.decodeFromJsonElement(ObservationRecordedEvent.serializer(), element)
         } catch (e: SerializationException) {
-            throw AlertServiceException.MalformedEvent(e.message?.lineSequence()?.firstOrNull() ?: "invalid structure")
+            throw malformedStructure(e)
         } catch (e: IllegalArgumentException) {
-            throw AlertServiceException.MalformedEvent(e.message?.lineSequence()?.firstOrNull() ?: "invalid structure")
+            throw malformedStructure(e)
         }
     }
+
+    /** A MalformedEvent that carries the first line of the decode error's message (or "invalid structure"). */
+    private fun malformedStructure(e: Exception): AlertServiceException.MalformedEvent =
+        AlertServiceException.MalformedEvent(e.message?.lineSequence()?.firstOrNull() ?: "invalid structure")
 
     /** Also used by the AMQP consumer for the `schemaVersion` message header. */
     fun requireSupported(version: Int) {

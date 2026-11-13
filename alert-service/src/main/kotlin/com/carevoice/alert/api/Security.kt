@@ -115,8 +115,8 @@ fun AuthenticationConfig.configureJwt(settings: JwtSettings) {
                 LogType.REQUEST,
                 "Authentication failed",
                 "reason" to reason,
-                // The path is user input, so at most 256 characters of it are logged.
-                "path" to call.request.path().take(256),
+                // The path is user input, so at most MAX_LOGGED_PATH (256) characters of it are logged.
+                "path" to call.request.path().take(MAX_LOGGED_PATH),
             )
             call.response.header(HttpHeaders.WWWAuthenticate, "Bearer realm=\"$REALM\"")
             call.respondProblem(
@@ -145,7 +145,7 @@ fun Route.roleRoute(path: String, vararg roles: Role, build: Route.() -> Unit): 
     build()
 }
 
-/** The authenticated caller; only valid inside [authorized] routes. */
+/** The authenticated caller; only valid inside [authenticated] routes. */
 val ApplicationCall.caller: CallerPrincipal
     get() = principal<CallerPrincipal>() ?: error("No authenticated principal on this route")
 

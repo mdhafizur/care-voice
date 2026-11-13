@@ -1,33 +1,18 @@
 package com.carevoice.alert
 
-import com.carevoice.alert.api.AlertApi
 import com.carevoice.alert.api.JwtSettings
-import com.carevoice.alert.api.alertServiceRoutes
-import com.carevoice.alert.api.installHttpPlugins
-import com.carevoice.alert.api.installRequestDeadline
-import com.carevoice.alert.application.AcknowledgeAlert
-import com.carevoice.alert.application.AlertRepository
-import com.carevoice.alert.application.CheckReadiness
-import com.carevoice.alert.application.DependencyHealthCheck
 import com.carevoice.alert.application.Embedder
-import com.carevoice.alert.application.GetAlert
-import com.carevoice.alert.application.GetAlertGuidance
-import com.carevoice.alert.application.GuidanceWriter
 import com.carevoice.alert.application.IdGenerator
 import com.carevoice.alert.application.IngestProtocols
-import com.carevoice.alert.application.ListAlerts
 import com.carevoice.alert.application.ProcessObservationEvent
-import com.carevoice.alert.application.ProcessedEventRepository
 import com.carevoice.alert.application.ProtocolChunkRepository
 import com.carevoice.alert.config.AppConfig
 import com.carevoice.alert.config.ConfigException
 import com.carevoice.alert.domain.AlertEvaluator
-import com.carevoice.alert.domain.AlertRule
 import com.carevoice.alert.infrastructure.amqp.DeadLetterReplayer
 import com.carevoice.alert.infrastructure.amqp.ObservationEventConsumer
 import com.carevoice.alert.infrastructure.guidance.ClasspathProtocolSource
 import com.carevoice.alert.infrastructure.guidance.GuidanceHttpClient
-import com.carevoice.alert.infrastructure.guidance.HashingEmbedder
 import com.carevoice.alert.infrastructure.migrations.MongoMigrationRunner
 import com.carevoice.alert.infrastructure.persistence.MongoAlertRepository
 import com.carevoice.alert.infrastructure.persistence.MongoClientFactory
@@ -37,106 +22,23 @@ import com.carevoice.alert.infrastructure.persistence.MongoProtocolChunkReposito
 import com.carevoice.alert.logging.LogType
 import com.carevoice.alert.logging.event
 import com.carevoice.alert.observability.MicrometerAlertMetrics
-import io.ktor.server.application.Application
-import io.ktor.server.application.ApplicationStopPreparing
 import io.ktor.server.engine.embeddedServer
 import io.ktor.server.netty.Netty
-import io.ktor.server.routing.routing
-import io.micrometer.core.instrument.MeterRegistry
 import io.micrometer.prometheusmetrics.PrometheusConfig
 import io.micrometer.prometheusmetrics.PrometheusMeterRegistry
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.runBlocking
 import org.slf4j.LoggerFactory
 import org.slf4j.event.Level
 import java.time.Clock
-import java.util.concurrent.atomic.AtomicBoolean
 import kotlin.coroutines.cancellation.CancellationException
 import kotlin.system.exitProcess
-import kotlin.time.Duration
 import kotlin.time.Duration.Companion.seconds
 
 private val log = LoggerFactory.getLogger("com.carevoice.alert.Application")
-
-/**
- * Everything [module] needs, passed in explicitly (manual constructor injection, no DI framework). Tests build it from
- * in-memory fakes, a fixed [clock] and deterministic [ids]; production builds it from the Mongo adapters in [main].
- *
- * @property healthChecks what `/readyz` checks (Mongo primary, RabbitMQ consumer).
- * @property protocolChunks the guidance knowledge base; null = none (every alert gets NO_MATCHING_PROTOCOL).
- * @property guidanceWriter the LLM writer for guidance; null = extractive guidance only.
- * @property requestTimeout upper bound for one HTTP request (`REQUEST_TIMEOUT_MS`); past it the call is cancelled, 503.
- * @property readinessPropagationDelay how long the pod keeps serving with readiness DOWN before it stops, so the load
- *   balancer has observed the 503 and routes no new requests to it (docs/CONTRACTS.md, section 9b).
- */
-class Dependencies(
-    val jwt: JwtSettings,
-    val rateLimitPerMinute: Int,
-    val meterRegistry: MeterRegistry,
-    val scrapeMetrics: () -> String,
-    val alerts: AlertRepository,
-    val processedEvents: ProcessedEventRepository,
-    val healthChecks: List<DependencyHealthCheck>,
-    val clock: Clock = Clock.systemUTC(),
-    val ids: IdGenerator = IdGenerator.RANDOM_UUID,
-    val evaluator: AlertRule = AlertEvaluator.default(),
-    val eventConcurrency: Int = AlertApi.DEFAULT_EVENT_CONCURRENCY,
-    val processObservationEvent: ProcessObservationEvent =
-        ProcessObservationEvent(evaluator, alerts, processedEvents, clock, ids, MicrometerAlertMetrics(meterRegistry)),
-    val embedder: Embedder = HashingEmbedder(),
-    val protocolChunks: ProtocolChunkRepository? = null,
-    val guidanceWriter: GuidanceWriter? = null,
-    val readinessPropagationDelay: Duration = Duration.ZERO,
-    val requestTimeout: Duration = AppConfig.DEFAULT_REQUEST_TIMEOUT,
-    /** Called once when the server begins to stop, after readiness flipped and before requests are drained. */
-    val beforeDrain: suspend () -> Unit = {},
-) {
-    val readiness: CheckReadiness = CheckReadiness(healthChecks)
-}
-
-/**
- * The HTTP application. Pure wiring: plugins, use cases built on the given ports, routes, and the shutdown order.
- *
- * Shutdown (SIGTERM → engine stop): readiness flips to DOWN first, the pod keeps serving for
- * [Dependencies.readinessPropagationDelay] so the load balancer stops routing to it, [Dependencies.beforeDrain] stops
- * the AMQP consumer after its in-flight messages, and only then does the engine drain in-flight HTTP requests.
- */
-fun Application.module(deps: Dependencies) {
-    // Step 1: install the HTTP plugins (request ids, login check, rate limit, metrics) and the request time limit.
-    installHttpPlugins(deps.jwt, deps.rateLimitPerMinute, deps.meterRegistry)
-    installRequestDeadline(deps.requestTimeout)
-    // Step 2: build the API from its use cases and serve its routes.
-    val api =
-        AlertApi(
-            processObservationEvent = deps.processObservationEvent,
-            listAlerts = ListAlerts(deps.alerts),
-            getAlert = GetAlert(deps.alerts),
-            acknowledgeAlert = AcknowledgeAlert(deps.alerts, deps.clock),
-            getAlertGuidance = GetAlertGuidance(deps.alerts, deps.embedder, deps.protocolChunks, deps.guidanceWriter),
-            readiness = deps.readiness,
-            scrapeMetrics = deps.scrapeMetrics,
-            eventConcurrency = deps.eventConcurrency,
-        )
-    routing { alertServiceRoutes(api) }
-
-    // Step 3: on shutdown, first report not ready and wait a moment, so new traffic goes to other pods.
-    // Only then drain the work in progress. The flag makes sure this runs only once.
-    val stopping = AtomicBoolean(false)
-    monitor.subscribe(ApplicationStopPreparing) {
-        if (stopping.compareAndSet(false, true)) {
-            log.info("Shutdown started: readiness DOWN, draining")
-            deps.readiness.markShuttingDown()
-            runBlocking {
-                delay(deps.readinessPropagationDelay)
-                deps.beforeDrain()
-            }
-        }
-    }
-}
 
 /**
  * Entry point. `alert-service migrate` applies pending Mongo migrations and exits (Kubernetes pre-upgrade Job, compose
@@ -150,11 +52,12 @@ fun main(args: Array<String>) {
             log.error(e.message)
             exitProcess(EXIT_CONFIG_ERROR)
         }
-    val replayLimit = replayLimit(args.toList())
+    val arguments = args.toList()
+    val replayLimit = replayLimit(arguments)
     when {
-        args.isEmpty() -> serve(config)
+        arguments.isEmpty() -> serve(config)
 
-        args.toList() == listOf("migrate") -> exitProcess(runMigrations(config))
+        arguments == listOf("migrate") -> exitProcess(runMigrations(config))
 
         replayLimit != null -> exitProcess(replayDeadLetters(config, replayLimit))
 
@@ -163,7 +66,7 @@ fun main(args: Array<String>) {
                 Level.ERROR,
                 null,
                 "Unknown arguments; expected none, 'migrate' or '$REPLAY_COMMAND [limit]'",
-                "arguments" to args.toList(),
+                "arguments" to arguments,
             )
             exitProcess(EXIT_USAGE)
         }

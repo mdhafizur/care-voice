@@ -36,10 +36,10 @@ class ListAlerts(private val alerts: AlertRepository) {
         require(limit in MIN_LIMIT..MAX_LIMIT) { "limit must be in $MIN_LIMIT..$MAX_LIMIT" }
         // Step 2: read the cursor and check that it still points to an alert of this ward.
         // Decode first: a malformed cursor is a 400 even when the ward has no alerts.
-        var keyset = cursor?.let { CursorCodec.decode(it) }
+        val decoded = cursor?.let { CursorCodec.decode(it) }
         // Well-formed but unknown (e.g. the alert belongs to another ward or never existed) → first page.
-        val cursorSent = keyset != null
-        if (keyset != null && alerts.findById(scope, keyset.id)?.createdAt != keyset.createdAt) keyset = null
+        val cursorSent = decoded != null
+        val keyset = decoded?.takeIf { pointsToWardAlert(scope, it) }
 
         // Step 3: count all matching alerts, then fetch the page in the direction the cursor asks for
         // (no cursor means the first page).
@@ -86,7 +86,7 @@ class ListAlerts(private val alerts: AlertRepository) {
         val rows = alerts.findPage(scope, status, keyset, limit + 1)
         val items = rows.take(limit)
         // We arrived here by moving past at least one newer alert (the cursor's), so a previous page exists.
-        val prev = items.firstOrNull()?.let { CursorCodec.encode(Keyset(it.createdAt, it.id, Keyset.Direction.NEWER)) }
+        val prev = items.firstOrNull()?.let { cursorOf(it, Keyset.Direction.NEWER) }
         return AlertPage(items, nextCursorOf(items, rows.size > limit), prev, total)
     }
 
@@ -111,7 +111,7 @@ class ListAlerts(private val alerts: AlertRepository) {
             return firstPage(scope, status, limit, total)
         }
         val first = items.first()
-        val prev = if (hasNewer) CursorCodec.encode(Keyset(first.createdAt, first.id, Keyset.Direction.NEWER)) else null
+        val prev = if (hasNewer) cursorOf(first, Keyset.Direction.NEWER) else null
         // The cursor's own alert is older than every item here, so a next page always exists.
         return AlertPage(items, nextCursorOf(items, hasMore = true), prev, total)
     }
@@ -119,8 +119,16 @@ class ListAlerts(private val alerts: AlertRepository) {
     /** Cursor that points after the last item, or null when there are no more items. */
     private fun nextCursorOf(items: List<Alert>, hasMore: Boolean): String? {
         val last = items.lastOrNull() ?: return null
-        return if (hasMore) CursorCodec.encode(Keyset(last.createdAt, last.id, Keyset.Direction.OLDER)) else null
+        return if (hasMore) cursorOf(last, Keyset.Direction.OLDER) else null
     }
+
+    /** The opaque cursor that points at [alert] and reads on in [direction]. */
+    private fun cursorOf(alert: Alert, direction: Keyset.Direction): String =
+        CursorCodec.encode(Keyset(alert.createdAt, alert.id, direction))
+
+    /** True when the cursor's alert is still in the ward and was created at the cursor's time. */
+    private suspend fun pointsToWardAlert(scope: WardScope, keyset: Keyset): Boolean =
+        alerts.findById(scope, keyset.id)?.createdAt == keyset.createdAt
 
     companion object {
         const val MIN_LIMIT = 1

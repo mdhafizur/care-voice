@@ -17,7 +17,7 @@ import kotlin.time.Duration
 private val deadlineLog = LoggerFactory.getLogger("com.carevoice.alert.api.RequestDeadline")
 
 /** The request path is user input, so the log line keeps at most this many characters of it. */
-private const val MAX_LOGGED_PATH = 256
+internal const val MAX_LOGGED_PATH = 256
 
 /**
  * Upper bound for the processing of one request (`REQUEST_TIMEOUT_MS`). When it is reached, the handler's coroutine is
