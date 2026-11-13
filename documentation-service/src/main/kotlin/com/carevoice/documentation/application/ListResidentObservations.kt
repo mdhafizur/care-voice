@@ -57,6 +57,11 @@ class ListResidentObservations(
 
     /** Throws a 404 unless the resident exists and is in the caller's ward. Both cases look the same to the client. */
     private suspend fun requireVisibleResident(caller: Caller, residentId: String) {
+        // A malformed id cannot exist: same 404, but without a database call.
+        if (!isWellFormedResidentId(residentId)) {
+            log.event(Level.DEBUG, LogType.BUSINESS, "Resident not visible", "reason" to "malformed-id")
+            throw ApplicationError.NotFound("Resident", residentId)
+        }
         val resident = residents.findById(caller.tenantId, residentId)
         if (resident == null || !caller.canSee(resident.tenantId, resident.wardId)) {
             log.event(
