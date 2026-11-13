@@ -85,7 +85,10 @@ class SubmitTranscript(
      * A malformed resident id is a 404, like an unknown one. A transcript the domain rejects is a 422.
      */
     suspend fun execute(caller: Caller, command: SubmitTranscriptCommand): SubmitTranscriptOutcome {
+        // Step 1: only logged-in staff may submit a note.
         caller.requireAnyRole()
+        // Step 2: the resident must exist in the caller's ward. A bad id, an unknown one or another ward
+        // all give the same 404, so the answer never reveals that a resident exists.
         val residentId =
             when (val parsed = ResidentId.of(command.residentId)) {
                 is Either.Left -> throw ApplicationError.NotFound("Resident", command.residentId)
@@ -95,12 +98,16 @@ class SubmitTranscript(
         if (resident == null || !caller.canSee(resident.tenantId, resident.wardId)) {
             throw ApplicationError.NotFound("Resident", command.residentId)
         }
+        // Step 3: idempotency. A retry with the same key and body gets the stored answer (200);
+        // the same key with a different body is a 409.
         val requestHash = requestHash(command)
 
         transcripts.findByIdempotencyKey(caller.username, command.idempotencyKey)?.let { existing ->
             return replay(existing, requestHash)
         }
 
+        // Step 4: extract the values OUTSIDE the transaction, because a slow AI call must not hold a database
+        // connection open.
         val processed =
             when (val outcome = processor.process(residentId, command.transcript)) {
                 is Either.Left -> {
@@ -112,6 +119,7 @@ class SubmitTranscript(
             }
         logExtractionDetails(processed)
 
+        // Step 5: build the answer and the record that will be saved.
         val result = buildResult(caller, resident, processed)
         val record =
             TranscriptRecord(
@@ -128,6 +136,8 @@ class SubmitTranscript(
         // Captured on the request coroutine, before any dispatcher switch: the trace context is thread-bound.
         val correlationIds = correlation.current()
 
+        // Step 6: one transaction for the transcript, its observations, one outbox row each and the audit row.
+        // All or nothing: an event row exists only if its observation exists.
         try {
             transactions.inTransaction {
                 when (transcripts.insert(record, command.transcript)) {
@@ -154,6 +164,7 @@ class SubmitTranscript(
                 )
             }
         } catch (_: IdempotencyRaceLost) {
+            // Another request with the same key committed first; answer with its stored result instead.
             val winner =
                 transcripts.findByIdempotencyKey(caller.username, command.idempotencyKey)
                     ?: throw IllegalStateException(
@@ -162,6 +173,7 @@ class SubmitTranscript(
             return replay(winner, requestHash)
         }
 
+        // Step 7: only after the commit: metrics, a log line, then the live feed and cache clearing (best effort).
         outcomeCounters.getValue(OUTCOME_PROCESSED).increment()
         result.observations.forEach { recordObservationMetric(it) }
         log.event(
