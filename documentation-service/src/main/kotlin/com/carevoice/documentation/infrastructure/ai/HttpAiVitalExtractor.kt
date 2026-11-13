@@ -2,6 +2,7 @@ package com.carevoice.documentation.infrastructure.ai
 
 import com.carevoice.documentation.infrastructure.http.HttpFailures
 import com.carevoice.documentation.infrastructure.http.TransportFailure
+import com.carevoice.documentation.infrastructure.http.timeoutAfter
 import com.carevoice.documentation.resilience.CircuitBreakerSettings
 import com.carevoice.documentation.resilience.CircuitBreakers
 import com.carevoice.documentation.resilience.Guarded
@@ -15,7 +16,6 @@ import com.carevoice.domain.extraction.AiVitalExtractor
 import com.carevoice.domain.extraction.RawVitalCandidate
 import io.github.resilience4j.circuitbreaker.CircuitBreaker
 import io.ktor.client.HttpClient
-import io.ktor.client.plugins.timeout
 import io.ktor.client.request.HttpRequestBuilder
 import io.ktor.client.request.post
 import io.ktor.client.request.setBody
@@ -189,11 +189,7 @@ abstract class HttpAiVitalExtractor(
         // Step 1: send the request with the time limits and the provider's headers.
         val response =
             httpClient.post(endpoint) {
-                timeout {
-                    requestTimeoutMillis = settings.timeout.inWholeMilliseconds
-                    connectTimeoutMillis = settings.timeout.inWholeMilliseconds
-                    socketTimeoutMillis = settings.timeout.inWholeMilliseconds
-                }
+                timeoutAfter(settings.timeout)
                 authenticate()
                 setBody(TextContent(requestBody(normalized), ContentType.Application.Json))
             }
@@ -240,6 +236,7 @@ abstract class HttpAiVitalExtractor(
 
     /** DEBUG: one line per HTTP attempt, so a retry (e.g. 503 then 200) is visible, not only the final outcome. */
     private fun logAttempt(number: Int, attempt: Attempt, durationMs: Long) {
+        val failed = attempt as? Attempt.Failed
         log.event(
             Level.DEBUG,
             LogType.EXTERNAL_REQUEST,
@@ -247,9 +244,9 @@ abstract class HttpAiVitalExtractor(
             "provider" to circuitBreaker.name,
             "model" to settings.model,
             "attempt" to number,
-            "httpStatus" to if (attempt is Attempt.Failed) attempt.httpStatus else 200,
-            "apiError" to (attempt as? Attempt.Failed)?.apiError,
-            "retryable" to (attempt as? Attempt.Failed)?.retryable,
+            "httpStatus" to if (failed != null) failed.httpStatus else 200,
+            "apiError" to failed?.apiError,
+            "retryable" to failed?.retryable,
             "durationMs" to durationMs,
             "timeoutMs" to settings.timeout.inWholeMilliseconds,
         )

@@ -4,6 +4,8 @@ import io.ktor.client.HttpClient
 import io.ktor.client.engine.cio.CIO
 import io.ktor.client.plugins.HttpTimeout
 import io.ktor.client.plugins.contentnegotiation.ContentNegotiation
+import io.ktor.client.plugins.timeout
+import io.ktor.client.request.HttpRequestBuilder
 import io.ktor.serialization.kotlinx.json.json
 import kotlinx.serialization.json.Json
 import kotlin.time.Duration
@@ -52,5 +54,18 @@ object HttpClients {
                 json(json)
             }
         }
+    }
+}
+
+/**
+ * Sets one time limit, [limit], for this request's whole call, its connect and its socket reads, so neither a dead
+ * host nor a stalled response can take longer. Used by adapters whose limit differs from the shared client's.
+ */
+internal fun HttpRequestBuilder.timeoutAfter(limit: Duration) {
+    val millis = limit.inWholeMilliseconds
+    timeout {
+        requestTimeoutMillis = millis
+        connectTimeoutMillis = millis
+        socketTimeoutMillis = millis
     }
 }

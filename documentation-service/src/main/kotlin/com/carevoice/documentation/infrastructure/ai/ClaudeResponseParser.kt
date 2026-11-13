@@ -2,8 +2,6 @@ package com.carevoice.documentation.infrastructure.ai
 
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
-import kotlinx.serialization.json.JsonPrimitive
-import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
 
@@ -20,8 +18,8 @@ internal object ClaudeResponseParser {
             ?.jsonArray
             ?.mapNotNull { block ->
                 val obj = block as? JsonObject ?: return@mapNotNull null
-                if ((obj["type"] as? JsonPrimitive)?.contentOrNull != "text") return@mapNotNull null
-                (obj["text"] as? JsonPrimitive)?.contentOrNull
+                if (obj.primitiveText("type") != "text") return@mapNotNull null
+                obj.primitiveText("text")
             }?.joinToString("\n")
     }.getOrNull()
 }

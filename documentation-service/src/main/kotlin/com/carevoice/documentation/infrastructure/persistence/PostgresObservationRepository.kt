@@ -7,21 +7,7 @@ import com.carevoice.documentation.application.ObservationRepository
 import com.carevoice.documentation.application.Page
 import com.carevoice.documentation.application.PageCursor
 import com.carevoice.documentation.application.PageRequest
-import com.carevoice.documentation.infrastructure.serialization.orThrow
-import com.carevoice.domain.model.BloodPressure
-import com.carevoice.domain.model.BodyTemperature
-import com.carevoice.domain.model.Confidence
-import com.carevoice.domain.model.ExtractionSource
-import com.carevoice.domain.model.Observation
-import com.carevoice.domain.model.ObservationId
-import com.carevoice.domain.model.ObservationStatus
-import com.carevoice.domain.model.Pulse
-import com.carevoice.domain.model.ResidentId
-import com.carevoice.domain.model.VitalSign
-import com.carevoice.domain.model.VitalType
-import java.math.BigDecimal
 import java.sql.Connection
-import java.sql.ResultSet
 import java.time.Instant
 import java.util.UUID
 import javax.sql.DataSource
@@ -45,7 +31,7 @@ class PostgresObservationRepository(private val dataSource: DataSource) : Observ
         withConnection(dataSource) { connection ->
             connection.prepareStatement(INSERT_SQL).use { statement ->
                 records.forEach { record ->
-                    statement.bindAll(insertParams(record))
+                    statement.bindAll(ObservationRows.insertParams(record))
                     statement.addBatch()
                 }
                 statement.executeBatch()
@@ -59,7 +45,7 @@ class PostgresObservationRepository(private val dataSource: DataSource) : Observ
             connection.queryOne(
                 "$SELECT_SQL WHERE tenant_id = ? AND ward_id = ? AND id = ?",
                 listOf(tenantId, wardId, observationId),
-                ::toRecord,
+                ObservationRows::toRecord,
             )
         }
 
@@ -134,19 +120,14 @@ class PostgresObservationRepository(private val dataSource: DataSource) : Observ
                     UPDATE observations
                        SET status = 'CONFIRMED', confirmed_by = ?, confirmed_at = ?, version = version + 1
                      WHERE tenant_id = ? AND ward_id = ? AND id = ? AND version = ?
-                    RETURNING $COLUMNS
+                    RETURNING ${ObservationRows.COLUMNS}
                     """,
                 listOf(confirmedBy, confirmedAt, tenantId, wardId, observationId, expectedVersion),
-                ::toRecord,
+                ObservationRows::toRecord,
             )
         when {
             updated != null -> ConfirmOutcome.Confirmed(updated)
-
-            connection.queryOne(
-                "SELECT 1 FROM observations WHERE tenant_id = ? AND ward_id = ? AND id = ?",
-                listOf(tenantId, wardId, observationId),
-            ) { true } != null -> ConfirmOutcome.VersionMismatch
-
+            observationExists(connection, tenantId, wardId, observationId) -> ConfirmOutcome.VersionMismatch
             else -> ConfirmOutcome.NotFound
         }
     }
@@ -171,7 +152,7 @@ class PostgresObservationRepository(private val dataSource: DataSource) : Observ
                  LIMIT ?
                 """,
             listOf(tenantId, wardId, tenantId, wardId, afterObservationId, limit),
-            ::toRecord,
+            ObservationRows::toRecord,
         )
     }
 
@@ -202,19 +183,15 @@ class PostgresObservationRepository(private val dataSource: DataSource) : Observ
                 connection.queryList(
                     "$SELECT_SQL WHERE $conditions ORDER BY recorded_at DESC, id DESC LIMIT ?",
                     params + fetch,
-                    ::toRecord,
+                    ObservationRows::toRecord,
                 )
             val items = rows.take(page.limit)
+            // A previous (newer) page exists only when this page came from a cursor and is not empty.
+            val hasPrevious = cursor != null && items.isNotEmpty()
             return Page(
                 items = items,
                 nextCursor = if (rows.size > page.limit) PageCursor.after(items.last()).encode() else null,
-                prevCursor = if (cursor != null &&
-                    items.isNotEmpty()
-                ) {
-                    PageCursor.before(items.first()).encode()
-                } else {
-                    null
-                },
+                prevCursor = if (hasPrevious) PageCursor.before(items.first()).encode() else null,
                 totalCount = total,
             )
         }
@@ -222,9 +199,10 @@ class PostgresObservationRepository(private val dataSource: DataSource) : Observ
         // Step 4: going back: read the newer rows oldest first, then reverse them to newest first.
         val rows =
             connection.queryList(
-                "$SELECT_SQL WHERE ${where.sql} AND (recorded_at, id) > (?, ?) ORDER BY recorded_at ASC, id ASC LIMIT ?",
+                "$SELECT_SQL WHERE ${where.sql} AND (recorded_at, id) > (?, ?) " +
+                    "ORDER BY recorded_at ASC, id ASC LIMIT ?",
                 where.params + listOf(cursor.recordedAt, cursor.id, fetch),
-                ::toRecord,
+                ObservationRows::toRecord,
             )
         val items = rows.take(page.limit).reversed()
         return Page(
@@ -242,73 +220,22 @@ class PostgresObservationRepository(private val dataSource: DataSource) : Observ
         where.params + listOf(cursor.id, cursor.recordedAt),
     ) { true } == true
 
+    /** True when the observation exists in this tenant and ward, whatever its version. */
+    private fun observationExists(
+        connection: Connection,
+        tenantId: String,
+        wardId: String,
+        observationId: UUID,
+    ): Boolean = connection.queryOne(
+        "SELECT 1 FROM observations WHERE tenant_id = ? AND ward_id = ? AND id = ?",
+        listOf(tenantId, wardId, observationId),
+    ) { true } != null
+
     companion object {
-        internal const val COLUMNS =
-            "id, tenant_id, ward_id, resident_id, transcript_id, vital_type, systolic, diastolic, pulse_bpm, " +
-                "temperature_celsius, source, confidence, status, recorded_at, confirmed_by, confirmed_at, version"
-        private const val SELECT_SQL = "SELECT $COLUMNS FROM observations"
-        // One `?` per column of `COLUMNS` (17), bound in the same order by insertParams.
+        private const val SELECT_SQL = "SELECT ${ObservationRows.COLUMNS} FROM observations"
+        // One `?` per column of `ObservationRows.COLUMNS` (17), bound in the same order by its insertParams.
         private const val INSERT_SQL =
-            "INSERT INTO observations ($COLUMNS) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
-
-        /** The insert values in [COLUMNS] order; columns of the other vital types stay null. */
-        private fun insertParams(record: ObservationRecord): List<Any?> {
-            val vital = record.observation.vital
-            return listOf(
-                record.id,
-                record.tenantId,
-                record.wardId,
-                record.observation.residentId.value,
-                record.transcriptId,
-                vital.type.name,
-                (vital as? BloodPressure)?.systolic,
-                (vital as? BloodPressure)?.diastolic,
-                (vital as? Pulse)?.bpm,
-                (vital as? BodyTemperature)?.celsius?.let { BigDecimal.valueOf(it) },
-                record.observation.source.name,
-                BigDecimal.valueOf(record.observation.confidence.value),
-                record.observation.status.name,
-                record.recordedAt,
-                record.confirmedBy,
-                record.confirmedAt,
-                record.version,
-            )
-        }
-
-        /** Mapper: row → domain, through the smart constructors. */
-        internal fun toRecord(rs: ResultSet): ObservationRecord {
-            val vital: VitalSign =
-                when (VitalType.valueOf(rs.getString("vital_type"))) {
-                    VitalType.BLOOD_PRESSURE -> BloodPressure.of(
-                        rs.getInt("systolic"),
-                        rs.getInt("diastolic"),
-                    ).orThrow("blood pressure")
-
-                    VitalType.PULSE -> Pulse.of(rs.getInt("pulse_bpm")).orThrow("pulse")
-
-                    VitalType.BODY_TEMPERATURE ->
-                        BodyTemperature.ofCelsius(
-                            rs.getBigDecimal("temperature_celsius").toDouble(),
-                        ).orThrow("temperature")
-                }
-            return ObservationRecord(
-                observation =
-                Observation(
-                    id = ObservationId(rs.uuid("id")),
-                    residentId = ResidentId.of(rs.getString("resident_id")).orThrow("resident id"),
-                    vital = vital,
-                    recordedAt = rs.instant("recorded_at"),
-                    source = ExtractionSource.valueOf(rs.getString("source")),
-                    confidence = Confidence(rs.getBigDecimal("confidence").toDouble()),
-                    status = ObservationStatus.valueOf(rs.getString("status")),
-                ),
-                tenantId = rs.getString("tenant_id"),
-                wardId = rs.getString("ward_id"),
-                transcriptId = rs.uuid("transcript_id"),
-                confirmedBy = rs.getString("confirmed_by"),
-                confirmedAt = rs.instantOrNull("confirmed_at"),
-                version = rs.getInt("version"),
-            )
-        }
+            "INSERT INTO observations (${ObservationRows.COLUMNS}) " +
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
     }
 }

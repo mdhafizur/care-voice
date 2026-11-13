@@ -25,13 +25,11 @@ class PostgresHealthProbe(
             // JDBC isValid takes whole seconds, and 0 means "no time limit", so at least 1 s is passed.
             dataSource.connection.use { it.isValid(timeout.inWholeSeconds.toInt().coerceAtLeast(1)) }
         }
-    }.let {
-        if (it == true) {
-            HealthStatus.UP
-        } else if (critical) {
-            HealthStatus.DOWN
-        } else {
-            HealthStatus.DEGRADED
+    }.let { valid ->
+        when {
+            valid == true -> HealthStatus.UP
+            critical -> HealthStatus.DOWN
+            else -> HealthStatus.DEGRADED
         }
     }
 }

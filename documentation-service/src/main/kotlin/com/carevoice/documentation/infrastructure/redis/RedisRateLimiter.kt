@@ -10,8 +10,6 @@ import io.micrometer.core.instrument.MeterRegistry
 import kotlinx.coroutines.future.await
 import org.slf4j.LoggerFactory
 import org.slf4j.event.Level
-import java.time.Clock
-import java.util.concurrent.ConcurrentHashMap
 import kotlin.coroutines.cancellation.CancellationException
 import kotlin.time.Duration
 import kotlin.time.Duration.Companion.milliseconds
@@ -34,9 +32,11 @@ class RedisRateLimiter(
     private val floorScopes: Set<String> = emptySet(),
 ) : DistributedRateLimiter {
     private val log = LoggerFactory.getLogger(RedisRateLimiter::class.java)
-    private val failOpen = Counter.builder(
-        FAIL_OPEN_METRIC,
-    ).description("Rate-limit checks allowed because Redis was unavailable").register(meterRegistry)
+    private val failOpen =
+        Counter
+            .builder(FAIL_OPEN_METRIC)
+            .description("Rate-limit checks allowed because Redis was unavailable")
+            .register(meterRegistry)
 
     /**
      * Counts the request in Redis with one atomic script and allows it while the count is within [limit].
@@ -62,15 +62,13 @@ class RedisRateLimiter(
                 // Step 3: allow the request while the count is within the limit, otherwise reject it.
                 val count = result[0]
                 val ttl = result[1].coerceAtLeast(1).milliseconds
-                return (
-                    if (count <=
-                        limit
-                    ) {
+                val decision: RateLimitDecision =
+                    if (count <= limit) {
                         RateLimitDecision.Allowed(limit - count, ttl)
                     } else {
                         RateLimitDecision.Rejected(ttl)
                     }
-                    ).also { logDecision(scope, "redis", it) }
+                return decision.also { logDecision(scope, "redis", it) }
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
@@ -93,9 +91,7 @@ class RedisRateLimiter(
         // Step 4: Redis failed, so fail open (let the request through). Floor scopes still get
         // the in-memory limit of this instance.
         failOpen.increment()
-        return if (scope in
-            floorScopes
-        ) {
+        return if (scope in floorScopes) {
             fallback.tryAcquire(scope, key, limit, window).also { logDecision(scope, "memory-floor", it) }
         } else {
             RateLimitDecision.Allowed(limit.toLong(), window).also { logDecision(scope, "fail-open", it) }
@@ -153,44 +149,5 @@ class RedisRateLimiter(
             end
             return {count, ttl}
             """.trimIndent()
-    }
-}
-
-/**
- * Fixed-window limiter in local memory: the per-instance floor when Redis is down, and the implementation used when
- * no Redis is configured (tests). Windows are aligned to the clock, so all keys roll over together.
- */
-class InMemoryRateLimiter(private val clock: Clock = Clock.systemUTC()) : DistributedRateLimiter {
-    private data class Window(val start: Long, var count: Long)
-
-    private val windows = ConcurrentHashMap<String, Window>()
-
-    /**
-     * Counts the request in this process's memory, in windows aligned to the clock.
-     * Ended windows are removed once the map holds more than [MAX_KEYS] keys.
-     */
-    override suspend fun tryAcquire(scope: String, key: String, limit: Int, window: Duration): RateLimitDecision {
-        val now = clock.millis()
-        val size = window.inWholeMilliseconds
-        val start = now - now % size
-        val current =
-            windows.compute("$scope:$key") { _, existing ->
-                if (existing == null || existing.start != start) Window(start, 1) else existing.also { it.count++ }
-            }!!
-        // Cheap housekeeping: drop windows that ended, so the map does not grow with every IP ever seen.
-        if (windows.size > MAX_KEYS) windows.entries.removeIf { it.value.start < start }
-        val resetIn = (start + size - now).coerceAtLeast(1).milliseconds
-        return if (current.count <=
-            limit
-        ) {
-            RateLimitDecision.Allowed(limit - current.count, resetIn)
-        } else {
-            RateLimitDecision.Rejected(resetIn)
-        }
-    }
-
-    private companion object {
-        /** Number of keys above which [tryAcquire] removes windows that have ended (cheap housekeeping). */
-        const val MAX_KEYS = 100_000
     }
 }

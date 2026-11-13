@@ -1,6 +1,7 @@
 package com.carevoice.documentation.infrastructure.alert
 
 import com.carevoice.documentation.infrastructure.http.HttpFailures
+import com.carevoice.documentation.infrastructure.http.timeoutAfter
 import com.carevoice.documentation.outbox.EventEnvelope
 import com.carevoice.documentation.outbox.EventPublisher
 import com.carevoice.documentation.outbox.OutboxEvent
@@ -14,7 +15,6 @@ import com.carevoice.documentation.resilience.event
 import com.carevoice.documentation.resilience.guard
 import io.github.resilience4j.circuitbreaker.CircuitBreaker
 import io.ktor.client.HttpClient
-import io.ktor.client.plugins.timeout
 import io.ktor.client.request.bearerAuth
 import io.ktor.client.request.header
 import io.ktor.client.request.post
@@ -104,11 +104,7 @@ class AlertServiceClient(
         val mark = TimeSource.Monotonic.markNow()
         val response =
             httpClient.post(endpoint) {
-                timeout {
-                    requestTimeoutMillis = requestTimeout.inWholeMilliseconds
-                    connectTimeoutMillis = requestTimeout.inWholeMilliseconds
-                    socketTimeoutMillis = requestTimeout.inWholeMilliseconds
-                }
+                timeoutAfter(requestTimeout)
                 bearerAuth(token)
                 // The consumer deduplicates on this key, which is what makes at-least-once delivery safe.
                 header(IDEMPOTENCY_KEY, EventEnvelope.eventIdOf(event))

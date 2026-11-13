@@ -2,8 +2,6 @@ package com.carevoice.documentation.infrastructure.ai
 
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
-import kotlinx.serialization.json.JsonPrimitive
-import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.jsonObject
 
 /**
@@ -21,8 +19,7 @@ internal object ApiErrors {
     /** Returns the error code from an error response body, or null when there is none or it looks unsafe to log. */
     fun code(body: String): String? = runCatching {
         val error = json.parseToJsonElement(body).jsonObject["error"] as? JsonObject ?: return null
-        val code =
-            (error["status"] as? JsonPrimitive)?.contentOrNull ?: (error["type"] as? JsonPrimitive)?.contentOrNull
+        val code = error.primitiveText("status") ?: error.primitiveText("type")
         code?.takeIf { CODE.matches(it) }
     }.getOrNull()
 }
