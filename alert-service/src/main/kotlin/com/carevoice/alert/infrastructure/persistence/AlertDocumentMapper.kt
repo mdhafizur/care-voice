@@ -1,6 +1,5 @@
 package com.carevoice.alert.infrastructure.persistence
 
-import com.carevoice.alert.application.ProcessedEvent
 import com.carevoice.alert.domain.Alert
 import com.carevoice.alert.domain.AlertRuleType
 import com.carevoice.alert.domain.AlertStatus
@@ -31,18 +30,6 @@ internal object AlertFields {
     const val VERSION = "version"
 }
 
-/** Field names of the `processed_events` collection. */
-internal object ProcessedEventFields {
-    const val COLLECTION = "processed_events"
-    const val EVENT_ID = "eventId"
-    const val TENANT_ID = "tenantId"
-    const val WARD_ID = "wardId"
-    const val OBSERVATION_ID = "observationId"
-    const val ALERTS_CREATED = "alertsCreated"
-    const val PROCESSED_AT = "processedAt"
-    const val COMPLETED = "completed"
-}
-
 /**
  * Mapper pattern: explicit domain ↔ BSON document functions instead of reflection-based codecs. The stored shape is
  * visible in one file, a domain rename cannot silently change the persisted field names, and dates are stored as BSON
@@ -62,10 +49,10 @@ internal object AlertDocumentMapper {
         .append(AlertFields.MESSAGE, alert.message)
         .append(AlertFields.VITAL, vitalToDocument(alert.vital))
         .append(AlertFields.STATUS, alert.status.name)
-        .append(AlertFields.OBSERVED_AT, Date.from(alert.observedAt))
-        .append(AlertFields.CREATED_AT, Date.from(alert.createdAt))
+        .append(AlertFields.OBSERVED_AT, alert.observedAt.toBsonDate())
+        .append(AlertFields.CREATED_AT, alert.createdAt.toBsonDate())
         .append(AlertFields.ACKNOWLEDGED_BY, alert.acknowledgedBy)
-        .append(AlertFields.ACKNOWLEDGED_AT, alert.acknowledgedAt?.let { Date.from(it) })
+        .append(AlertFields.ACKNOWLEDGED_AT, alert.acknowledgedAt?.toBsonDate())
         .append(AlertFields.VERSION, alert.version)
 
     /** Reads a stored alert back. Unknown enum names or missing required fields throw. */
@@ -111,29 +98,6 @@ internal object AlertDocumentMapper {
 
         else -> error("Unknown vital type '$type' in stored alert")
     }
-}
-
-internal object ProcessedEventDocumentMapper {
-    /** Stores the processed event with `processedAt` as a BSON date, which the TTL index needs. */
-    fun toDocument(event: ProcessedEvent): Document = Document()
-        .append(ProcessedEventFields.EVENT_ID, event.eventId)
-        .append(ProcessedEventFields.TENANT_ID, event.tenantId)
-        .append(ProcessedEventFields.WARD_ID, event.wardId)
-        .append(ProcessedEventFields.OBSERVATION_ID, event.observationId)
-        .append(ProcessedEventFields.ALERTS_CREATED, event.alertsCreated)
-        .append(ProcessedEventFields.PROCESSED_AT, Date.from(event.processedAt))
-        .append(ProcessedEventFields.COMPLETED, event.completed)
-
-    /** Reads a processed event back. A record without `completed` counts as completed. */
-    fun fromDocument(doc: Document): ProcessedEvent = ProcessedEvent(
-        eventId = doc.getString(ProcessedEventFields.EVENT_ID),
-        tenantId = doc.getString(ProcessedEventFields.TENANT_ID),
-        wardId = doc.getString(ProcessedEventFields.WARD_ID),
-        observationId = doc.getString(ProcessedEventFields.OBSERVATION_ID),
-        alertsCreated = (doc.get(ProcessedEventFields.ALERTS_CREATED) as Number).toInt(),
-        processedAt = doc.getDate(ProcessedEventFields.PROCESSED_AT).toInstant(),
-        completed = doc.getBoolean(ProcessedEventFields.COMPLETED, true),
-    )
 }
 
 /** Converts to a BSON date (java.util.Date), the type MongoDB uses for dates and range queries. */

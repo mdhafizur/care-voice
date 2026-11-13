@@ -1,0 +1,146 @@
+package com.carevoice.alert.infrastructure.migrations
+
+import com.carevoice.alert.infrastructure.persistence.AlertFields
+import com.carevoice.alert.infrastructure.persistence.ProcessedEventFields
+import com.carevoice.alert.infrastructure.persistence.ProtocolChunkFields
+import com.mongodb.MongoCommandException
+import com.mongodb.client.model.IndexModel
+import com.mongodb.client.model.IndexOptions
+import com.mongodb.client.model.Indexes
+import com.mongodb.kotlin.client.coroutine.MongoDatabase
+import kotlinx.coroutines.flow.toList
+import org.bson.Document
+import java.util.concurrent.TimeUnit
+
+/**
+ * Alerts: unique `eventId + rule` (a redelivered event can never create a second alert for the same rule — the
+ * database, not application code, enforces it) and the compound list index whose prefix `tenantId, wardId` is the
+ * ward scope every query starts with, followed by the optional status filter and the keyset sort order.
+ */
+object M001CreateAlertIndexes : MongoMigration {
+    override val version = 1
+    override val description = "Create alert indexes"
+
+    // Index names: `ux_` = unique index, `ix_` = normal index (`ttl_` in M002 = TTL index).
+    private val indexes =
+        listOf(
+            IndexModel(
+                Indexes.ascending(AlertFields.EVENT_ID, AlertFields.RULE),
+                IndexOptions().name("ux_alerts_event_rule").unique(true),
+            ),
+            IndexModel(
+                Indexes.compoundIndex(
+                    Indexes.ascending(AlertFields.TENANT_ID, AlertFields.WARD_ID, AlertFields.STATUS),
+                    Indexes.descending(AlertFields.CREATED_AT, AlertFields.ID),
+                ),
+                IndexOptions().name("ix_alerts_scope_status_created"),
+            ),
+            // Listing without a status filter would otherwise scan every status branch of the index above.
+            IndexModel(
+                Indexes.compoundIndex(
+                    Indexes.ascending(AlertFields.TENANT_ID, AlertFields.WARD_ID),
+                    Indexes.descending(AlertFields.CREATED_AT, AlertFields.ID),
+                ),
+                IndexOptions().name("ix_alerts_scope_created"),
+            ),
+        )
+
+    // In this text 1 means ascending and -1 descending order, as in MongoDB index keys. Changing the text changes
+    // the checksum.
+    override val definition: String =
+        "alerts: unique {eventId:1, rule:1}; {tenantId:1, wardId:1, status:1, createdAt:-1, _id:-1}; " +
+            "{tenantId:1, wardId:1, createdAt:-1, _id:-1}"
+
+    /**
+     * Creates the alerts collection if needed, then its indexes.
+     * Creating an index that already exists with the same options changes nothing.
+     */
+    override suspend fun apply(database: MongoDatabase) {
+        createCollectionIfMissing(database, AlertFields.COLLECTION)
+        database.getCollection(AlertFields.COLLECTION, Document::class.java).createIndexes(indexes).toList()
+    }
+}
+
+/**
+ * Processed events: unique `eventId` (the idempotency decision) and a TTL index that lets MongoDB delete records
+ * 30 days after `processedAt`. A TTL index needs no scheduled cleanup job, so nothing has to coordinate which pod runs
+ * it; 30 days is far longer than any broker redelivery or outbox retry window.
+ */
+object M002CreateProcessedEventsIndexes : MongoMigration {
+    override val version = 2
+    override val description = "Create processed_events indexes (unique eventId, TTL 30 days)"
+    const val RETENTION_DAYS = 30L
+
+    override val definition: String =
+        "processed_events: unique {eventId:1}; TTL {processedAt:1} expireAfter=${RETENTION_DAYS}d"
+
+    /**
+     * Creates the processed_events collection if needed, then its two indexes:
+     * the unique one and the TTL one (TTL: MongoDB deletes the record after a set time).
+     */
+    override suspend fun apply(database: MongoDatabase) {
+        createCollectionIfMissing(database, ProcessedEventFields.COLLECTION)
+        database.getCollection(ProcessedEventFields.COLLECTION, Document::class.java).createIndexes(
+            listOf(
+                IndexModel(
+                    Indexes.ascending(ProcessedEventFields.EVENT_ID),
+                    IndexOptions().name("ux_processed_events_event").unique(true),
+                ),
+                IndexModel(
+                    Indexes.ascending(ProcessedEventFields.PROCESSED_AT),
+                    IndexOptions().name("ttl_processed_events_processed_at").expireAfter(RETENTION_DAYS, TimeUnit.DAYS),
+                ),
+            ),
+        ).toList()
+    }
+}
+
+/**
+ * Protocol knowledge base (guidance RAG, ADR-0023): chunks are read per embedding model in document order, and the
+ * corpus collection holds one version record per model (its `_id`, no extra index needed).
+ */
+object M003CreateProtocolChunkIndexes : MongoMigration {
+    override val version = 3
+    override val description = "Create protocol_chunks index and protocol_corpora collection"
+
+    override val definition: String = "protocol_chunks: {model:1, order:1}; protocol_corpora: collection"
+
+    /** Creates both protocol collections if needed, then the index on model and order. */
+    override suspend fun apply(database: MongoDatabase) {
+        createCollectionIfMissing(database, ProtocolChunkFields.COLLECTION)
+        createCollectionIfMissing(database, ProtocolChunkFields.CORPUS_COLLECTION)
+        database.getCollection(ProtocolChunkFields.COLLECTION, Document::class.java).createIndexes(
+            listOf(
+                IndexModel(
+                    Indexes.ascending(ProtocolChunkFields.MODEL, ProtocolChunkFields.ORDER),
+                    IndexOptions().name("ix_protocol_chunks_model_order"),
+                ),
+            ),
+        ).toList()
+    }
+}
+
+/** The ordered migration catalogue. Append only. */
+object Migrations {
+    val ALL: List<MongoMigration> =
+        listOf(M001CreateAlertIndexes, M002CreateProcessedEventsIndexes, M003CreateProtocolChunkIndexes)
+}
+
+/** Creates the collection only when it does not exist yet; another pod creating it at the same time is fine. */
+private suspend fun createCollectionIfMissing(database: MongoDatabase, name: String) {
+    val existing = mutableListOf<String>()
+    database.listCollectionNames().collect { existing += it }
+    if (name in existing) return
+    try {
+        database.createCollection(name)
+    } catch (e: MongoCommandException) {
+        // 48 = NamespaceExists: another pod created it between our check and our create; that is the goal anyway.
+        if (e.errorCode != NAMESPACE_EXISTS) throw e
+    }
+}
+
+/**
+ * MongoDB error code 48, NamespaceExists: a collection with this name already exists.
+ * Official list: https://github.com/mongodb/mongo/blob/master/src/mongo/base/error_codes.yml
+ */
+private const val NAMESPACE_EXISTS = 48

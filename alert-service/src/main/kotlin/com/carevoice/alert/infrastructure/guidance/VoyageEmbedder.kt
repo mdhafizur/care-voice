@@ -7,11 +7,9 @@ import io.ktor.client.plugins.timeout
 import io.ktor.client.request.header
 import io.ktor.client.request.post
 import io.ktor.client.request.setBody
-import io.ktor.client.statement.bodyAsText
 import io.ktor.http.ContentType
 import io.ktor.http.HttpHeaders
 import io.ktor.http.content.TextContent
-import io.ktor.http.isSuccess
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.add
@@ -75,9 +73,7 @@ class VoyageEmbedder(
                 setBody(TextContent(body.toString(), ContentType.Application.Json))
             }
         // Step 3: log the answer, and fail on any HTTP status that is not a success.
-        val text = response.bodyAsText()
-        logProviderResponse("voyage", model, "embed_$inputType", response.status.value, text)
-        check(response.status.isSuccess()) { "Voyage embeddings failed with HTTP ${response.status.value}" }
+        val text = response.readCheckedBody("voyage", model, "embed_$inputType", failure = "Voyage embeddings")
         // Step 4: read one vector per text, back in the order of the input.
         val data = Json.parseToJsonElement(text).jsonObject.getValue("data").jsonArray
         return data

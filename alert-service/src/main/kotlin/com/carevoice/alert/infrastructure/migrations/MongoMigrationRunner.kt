@@ -2,6 +2,7 @@ package com.carevoice.alert.infrastructure.migrations
 
 import com.carevoice.alert.logging.LogType
 import com.carevoice.alert.logging.event
+import com.mongodb.MongoCommandException
 import com.mongodb.MongoWriteException
 import com.mongodb.client.model.Filters
 import com.mongodb.client.model.FindOneAndUpdateOptions
@@ -16,6 +17,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.toList
 import kotlinx.coroutines.withContext
 import org.bson.Document
+import org.bson.conversions.Bson
 import org.slf4j.LoggerFactory
 import org.slf4j.event.Level
 import java.time.Clock
@@ -60,6 +62,10 @@ class MongoMigrationRunner(
     private val history = database.getCollection(HISTORY_COLLECTION, Document::class.java)
     private val locks = database.getCollection(LOCK_COLLECTION, Document::class.java)
 
+    /** The newest migration version this code knows; 0 when there are no migrations. */
+    private val latestKnownVersion: Int
+        get() = migrations.lastOrNull()?.version ?: 0
+
     init {
         val versions = migrations.map { it.version }
         require(versions == versions.sorted() && versions.toSet().size == versions.size) {
@@ -80,7 +86,7 @@ class MongoMigrationRunner(
             // Step 3: read what is already applied, refuse to go on when it does not fit this code, and find the rest.
             val applied = appliedMigrations()
             verifyCompatible(applied)
-            val pending = migrations.filter { it.version !in applied }
+            val pending = pendingMigrations(applied)
             // Step 4: apply each pending migration in order, record it, and renew the lock so it does not expire.
             for (migration in pending) {
                 log.event(
@@ -100,7 +106,7 @@ class MongoMigrationRunner(
                     Level.INFO,
                     LogType.DB_OPERATION,
                     "Mongo schema is up to date",
-                    "version" to (migrations.lastOrNull()?.version ?: 0),
+                    "version" to latestKnownVersion,
                 )
             }
             return pending.map { it.version }
@@ -113,13 +119,17 @@ class MongoMigrationRunner(
     suspend fun validate() {
         val applied = appliedMigrations()
         verifyCompatible(applied)
-        val pending = migrations.filter { it.version !in applied }.map { it.version }
+        val pending = pendingMigrations(applied).map { it.version }
         if (pending.isNotEmpty()) {
             throw MigrationException(
                 "Mongo schema has pending migrations $pending and MONGO_MIGRATE_ON_STARTUP=false; run 'migrate' first.",
             )
         }
     }
+
+    /** The migrations of this code that are not in [applied] yet, in version order. */
+    private fun pendingMigrations(applied: Map<Int, Document>): List<MongoMigration> =
+        migrations.filter { it.version !in applied }
 
     /** All recorded migrations, keyed by version. */
     private suspend fun appliedMigrations(): Map<Int, Document> =
@@ -132,11 +142,10 @@ class MongoMigrationRunner(
     private fun verifyCompatible(applied: Map<Int, Document>) {
         val known = migrations.associateBy { it.version }
         val unknown = applied.keys.filter { it !in known }
-        val latestKnown = migrations.lastOrNull()?.version ?: 0
         if (unknown.isNotEmpty()) {
             throw MigrationException(
                 "The database has migrations $unknown that this code does not know " +
-                    "(code is at version $latestKnown). " +
+                    "(code is at version $latestKnownVersion). " +
                     "Refusing to start: the database is newer than the code.",
             )
         }
@@ -200,7 +209,7 @@ class MongoMigrationRunner(
                 ),
                 FindOneAndUpdateOptions().upsert(true).returnDocument(ReturnDocument.AFTER),
             )?.getString(OWNER) == owner
-        } catch (e: com.mongodb.MongoCommandException) {
+        } catch (e: MongoCommandException) {
             if (e.errorCode == DUPLICATE_KEY) false else throw e
         } catch (e: MongoWriteException) {
             if (e.code == DUPLICATE_KEY) false else throw e
@@ -210,7 +219,7 @@ class MongoMigrationRunner(
     /** Moves the lock expiry forward after each migration, so a long run does not lose the lock to another pod. */
     private suspend fun renewLock() {
         locks.updateOne(
-            Filters.and(Filters.eq("_id", LOCK_ID), Filters.eq(OWNER, owner)),
+            ownLockFilter(),
             Updates.set(EXPIRES_AT, Date.from(expiryFrom(clock.instant()))),
         )
     }
@@ -223,7 +232,7 @@ class MongoMigrationRunner(
     private suspend fun releaseLock(): Unit = withContext(NonCancellable) {
         try {
             locks.updateOne(
-                Filters.and(Filters.eq("_id", LOCK_ID), Filters.eq(OWNER, owner)),
+                ownLockFilter(),
                 // An expiry at Instant.EPOCH (1970) means the lock counts as expired right away.
                 Updates.combine(Updates.set(LOCKED, false), Updates.set(EXPIRES_AT, Date.from(Instant.EPOCH))),
             )
@@ -244,6 +253,9 @@ class MongoMigrationRunner(
             cause = cause,
         )
     }
+
+    /** Matches the lock document only while this instance ([owner]) holds it. */
+    private fun ownLockFilter(): Bson = Filters.and(Filters.eq("_id", LOCK_ID), Filters.eq(OWNER, owner))
 
     /** Lock expiry time: [now] plus [lockTtl]. */
     private fun expiryFrom(now: Instant): Instant = now.plusMillis(lockTtl.inWholeMilliseconds)

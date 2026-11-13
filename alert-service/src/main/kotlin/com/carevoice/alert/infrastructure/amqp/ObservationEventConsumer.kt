@@ -136,29 +136,7 @@ class ObservationEventConsumer(
             .description("1 while consumption is paused because a dependency (MongoDB) is down")
             .register(registry)
         // Step 3: start the workers. Each one takes deliveries from the buffer and handles them.
-        repeat(workers) { index ->
-            workerJobs +=
-                scope.launch(Dispatchers.Default) {
-                    for (delivery in deliveries) {
-                        try {
-                            handle(delivery)
-                        } catch (e: CancellationException) {
-                            throw e
-                        } catch (e: Exception) {
-                            // E.g. the ack failed because the channel was replaced by connection recovery: the broker
-                            // redelivers the unacked message, so the worker logs and carries on.
-                            log.event(
-                                Level.ERROR,
-                                LogType.EXTERNAL_REQUEST,
-                                "Could not settle delivery",
-                                "deliveryTag" to delivery.envelope.deliveryTag,
-                                cause = e,
-                            )
-                        }
-                    }
-                    log.event(Level.DEBUG, null, "AMQP worker stopped", "worker" to index)
-                }
-        }
+        repeat(workers) { index -> workerJobs += scope.launch(Dispatchers.Default) { runWorker(index) } }
         // Step 4: connect to RabbitMQ in the background and retry until it works, so a broker that
         // is down does not stop the service from starting.
         supervisor =
@@ -184,6 +162,31 @@ class ObservationEventConsumer(
     }
 
     /**
+     * One worker: handles the deliveries from the buffer one after the other, until the buffer is closed by [stop].
+     * A delivery that fails is logged, and the worker goes on with the next one.
+     */
+    private suspend fun runWorker(index: Int) {
+        for (delivery in deliveries) {
+            try {
+                handle(delivery)
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                // E.g. the ack failed because the channel was replaced by connection recovery: the broker
+                // redelivers the unacked message, so the worker logs and carries on.
+                log.event(
+                    Level.ERROR,
+                    LogType.EXTERNAL_REQUEST,
+                    "Could not settle delivery",
+                    "deliveryTag" to delivery.envelope.deliveryTag,
+                    cause = e,
+                )
+            }
+        }
+        log.event(Level.DEBUG, null, "AMQP worker stopped", "worker" to index)
+    }
+
+    /**
      * Graceful stop: cancel the consumer (the broker stops sending), let the workers finish the messages already
      * received, then close the channels and the connection. Messages that were not acked are redelivered by the broker
      * to another pod.
@@ -193,19 +196,7 @@ class ObservationEventConsumer(
         stopping = true
         supervisor?.cancel()
         // Step 2: tell the broker to stop sending new messages to this consumer.
-        withContext(Dispatchers.IO) {
-            consumerTag?.let { tag ->
-                runCatching { synchronized(consumeLock) { consumeChannel?.basicCancel(tag) } }
-                    .onFailure {
-                        log.event(
-                            Level.WARN,
-                            LogType.EXTERNAL_REQUEST,
-                            "Could not cancel the RabbitMQ consumer",
-                            cause = it,
-                        )
-                    }
-            }
-        }
+        cancelSubscription(consumerTag, "Could not cancel the RabbitMQ consumer")
         // Step 3: close the buffer and give the workers time to finish the messages they hold.
         // Workers still busy after the timeout are cancelled.
         deliveries.close()
@@ -454,17 +445,7 @@ class ObservationEventConsumer(
         }
         // Step 2: cancel the consumer, so the broker stops sending messages while the
         // dependency is down.
-        withContext(Dispatchers.IO) {
-            runCatching { tagToCancel?.let { tag -> synchronized(consumeLock) { consumeChannel?.basicCancel(tag) } } }
-                .onFailure {
-                    log.event(
-                        Level.WARN,
-                        LogType.EXTERNAL_REQUEST,
-                        "Could not cancel the consumer for the pause",
-                        cause = it,
-                    )
-                }
-        }
+        cancelSubscription(tagToCancel, "Could not cancel the consumer for the pause")
         // Step 3: log the pause and start a background loop that resumes once the dependency is healthy.
         log.event(
             Level.WARN,
@@ -516,7 +497,7 @@ class ObservationEventConsumer(
 
     /** `nack` with requeue: back to the queue for this or another pod, without a retry attempt or dead-lettering. */
     private suspend fun requeue(tag: Long) {
-        withContext(Dispatchers.IO) { synchronized(consumeLock) { consumeChannel?.basicNack(tag, false, true) } }
+        onConsumeChannel { it.basicNack(tag, false, true) }
         consumed("requeued").increment()
         log.event(
             Level.DEBUG,
@@ -580,9 +561,7 @@ class ObservationEventConsumer(
                     "Could not publish the retry; falling back to the 5 s retry queue",
                     "error" to e.javaClass.simpleName,
                 )
-                withContext(Dispatchers.IO) {
-                    synchronized(consumeLock) { consumeChannel?.basicNack(delivery.envelope.deliveryTag, false, false) }
-                }
+                onConsumeChannel { it.basicNack(delivery.envelope.deliveryTag, false, false) }
                 "retry-fallback"
             }
         // Step 4: log the decision and count the retry.
@@ -637,7 +616,26 @@ class ObservationEventConsumer(
 
     /** Acks on the consume channel. The lock is needed because a channel must not be used by two threads at once. */
     private suspend fun ack(tag: Long) {
-        withContext(Dispatchers.IO) { synchronized(consumeLock) { consumeChannel?.basicAck(tag, false) } }
+        onConsumeChannel { it.basicAck(tag, false) }
+    }
+
+    /**
+     * Runs [action] with the consume channel: on the IO dispatcher (the client library blocks) and under
+     * [consumeLock], because a channel must not be used by two threads at once. Does nothing when there is no channel.
+     */
+    private suspend fun onConsumeChannel(action: (Channel) -> Unit) {
+        withContext(Dispatchers.IO) { synchronized(consumeLock) { consumeChannel?.let(action) } }
+    }
+
+    /**
+     * Cancels the subscription [tag] (nothing to cancel when it is null), so the broker stops sending messages to this
+     * consumer. A failure is only logged (at WARN, as [failureMessage]), because the caller goes on either way.
+     */
+    private suspend fun cancelSubscription(tag: String?, failureMessage: String) {
+        withContext(Dispatchers.IO) {
+            runCatching { tag?.let { synchronized(consumeLock) { consumeChannel?.basicCancel(it) } } }
+                .onFailure { log.event(Level.WARN, LogType.EXTERNAL_REQUEST, failureMessage, cause = it) }
+        }
     }
 
     /** Closes both channels and the connection, ignoring errors, and clears the state for a clean reconnect. */

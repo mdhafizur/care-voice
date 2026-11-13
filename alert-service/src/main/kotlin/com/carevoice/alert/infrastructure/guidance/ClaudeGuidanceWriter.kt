@@ -9,10 +9,8 @@ import io.ktor.client.plugins.timeout
 import io.ktor.client.request.header
 import io.ktor.client.request.post
 import io.ktor.client.request.setBody
-import io.ktor.client.statement.bodyAsText
 import io.ktor.http.ContentType
 import io.ktor.http.content.TextContent
-import io.ktor.http.isSuccess
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.addJsonObject
 import kotlinx.serialization.json.buildJsonObject
@@ -69,9 +67,7 @@ class ClaudeGuidanceWriter(private val settings: ClaudeSettings, private val htt
                 header("anthropic-version", API_VERSION)
                 setBody(TextContent(requestBody(situation, sources), ContentType.Application.Json))
             }
-        val body = response.bodyAsText()
-        logProviderResponse("claude", settings.model, "write", response.status.value, body)
-        check(response.status.isSuccess()) { "Claude API failed with HTTP ${response.status.value}" }
+        val body = response.readCheckedBody("claude", settings.model, "write", failure = "Claude API")
         return parse(textOf(body))
     }
 

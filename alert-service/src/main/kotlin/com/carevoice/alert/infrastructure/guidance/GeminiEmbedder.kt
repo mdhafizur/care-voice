@@ -7,10 +7,8 @@ import io.ktor.client.plugins.timeout
 import io.ktor.client.request.header
 import io.ktor.client.request.post
 import io.ktor.client.request.setBody
-import io.ktor.client.statement.bodyAsText
 import io.ktor.http.ContentType
 import io.ktor.http.content.TextContent
-import io.ktor.http.isSuccess
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.addJsonObject
 import kotlinx.serialization.json.buildJsonObject
@@ -72,9 +70,8 @@ class GeminiEmbedder(
                 header(GeminiApi.API_KEY_HEADER, apiKey)
                 setBody(TextContent(requestBody(texts, purpose), ContentType.Application.Json))
             }
-        val body = response.bodyAsText()
-        logProviderResponse("gemini", model, "embed_${purpose.name.lowercase()}", response.status.value, body)
-        check(response.status.isSuccess()) { "Gemini embeddings failed with HTTP ${response.status.value}" }
+        val operation = "embed_${purpose.name.lowercase()}"
+        val body = response.readCheckedBody("gemini", model, operation, failure = "Gemini embeddings")
         val vectors = vectorsOf(body)
         check(vectors.size == texts.size) { "Gemini returned ${vectors.size} embeddings for ${texts.size} texts" }
         return vectors
