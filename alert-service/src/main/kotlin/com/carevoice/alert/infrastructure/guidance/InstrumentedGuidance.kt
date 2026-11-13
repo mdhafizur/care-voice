@@ -116,6 +116,11 @@ class InstrumentedEmbedder(private val delegate: Embedder, provider: String, reg
 }
 
 private val providerHttpLog = LoggerFactory.getLogger("com.carevoice.alert.infrastructure.guidance.ProviderHttp")
+
+/**
+ * What a provider error code looks like: 1 to 64 letters, digits, `_` or `.` (e.g. Gemini `RESOURCE_EXHAUSTED`,
+ * Anthropic `overloaded_error`). Anything else is not logged.
+ */
 private val API_ERROR_CODE = Regex("^[A-Za-z0-9_.]{1,64}$")
 
 /**

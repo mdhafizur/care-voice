@@ -66,6 +66,8 @@ suspend fun ApplicationCall.respondJsonWithETag(
 /** Weak ETag of a response body: same body, same tag, on every pod (no per-instance state involved). */
 fun weakETagOf(body: String): String {
     val digest = MessageDigest.getInstance("SHA-256").digest(body.toByteArray(Charsets.UTF_8))
+    // The tag is the first 18 of the 32 hash bytes, which are exactly 24 base64url characters.
+    // `W/` marks the ETag as weak (RFC 9110, section 8.8.3).
     return "W/\"" + Base64.getUrlEncoder().withoutPadding().encodeToString(digest.copyOf(18)) + "\""
 }
 
@@ -94,4 +96,8 @@ fun parseIfMatch(header: String?): VersionPrecondition? {
     return VersionPrecondition.OneOf(versions)
 }
 
+/**
+ * A strong ETag that holds only a version number, e.g. `"3"`. At most 18 digits, so every match fits in a Long
+ * (whose largest value has 19 digits).
+ */
 private val VERSION_TAG = Regex("^\"(\\d{1,18})\"$")

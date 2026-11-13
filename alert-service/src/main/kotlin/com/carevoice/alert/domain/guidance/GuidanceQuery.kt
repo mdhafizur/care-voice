@@ -38,6 +38,7 @@ object GuidanceQuery {
         val severity = alert.severity.name.lowercase()
         val clinical = "${ruleTerms.getValue(alert.rule)}. ${describe(alert.vital)}. $severity alert"
         add(RetrievalQuery(RetrievalQuery.Aspect.CLINICAL, clinical))
+        // "unconfirmed value" is part of ThresholdRule.UNCONFIRMED_SUFFIX, the marker of a value not yet confirmed.
         if (alert.message.contains("unconfirmed value", ignoreCase = true)) {
             add(RetrievalQuery(RetrievalQuery.Aspect.REVIEW, REVIEW_QUERY))
         }

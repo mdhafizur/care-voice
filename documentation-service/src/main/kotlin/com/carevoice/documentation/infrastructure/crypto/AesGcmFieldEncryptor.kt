@@ -77,10 +77,17 @@ class AesGcmFieldEncryptor(
     }
 
     companion object {
+        /** AES in GCM mode. GCM works like a stream cipher, so it needs no padding (`NoPadding`). */
         private const val TRANSFORMATION = "AES/GCM/NoPadding"
         private const val SEPARATOR = ':'
+
+        /** 32 bytes = a 256-bit key, which makes this AES-256. */
         const val KEY_BYTES = 32
+
+        /** 12 bytes (96 bits): the IV length NIST SP 800-38D recommends for GCM. */
         const val IV_BYTES = 12
+
+        /** 128 bits (16 bytes): the full-size GCM authentication tag, the largest GCM allows. */
         const val TAG_BITS = 128
     }
 }

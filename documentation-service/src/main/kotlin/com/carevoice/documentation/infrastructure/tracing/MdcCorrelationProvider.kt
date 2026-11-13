@@ -20,6 +20,8 @@ class MdcCorrelationProvider : CorrelationProvider {
         val context = Span.current().spanContext
         val traceparent =
             if (context.isValid) {
+                // W3C `traceparent` header: version-traceid-parentid-flags. `00` is the only version the spec defines
+                // so far. Spec: https://www.w3.org/TR/trace-context/#traceparent-header
                 "00-${context.traceId}-${context.spanId}-${context.traceFlags.asHex()}"
             } else {
                 null

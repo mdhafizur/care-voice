@@ -55,12 +55,17 @@ object MongoClientFactory {
         .applyToClusterSettings {
             it.serverSelectionTimeout(SERVER_SELECTION_TIMEOUT.inWholeMilliseconds, TimeUnit.MILLISECONDS)
         }.applyToSocketSettings {
+            // Opening a connection to a server may take at most 3 s.
             it.connectTimeout(3, TimeUnit.SECONDS)
+            // A read on an open connection fails after 10 s without an answer from the server.
             it.readTimeout(10, TimeUnit.SECONDS)
         }.applyToConnectionPoolSettings {
             it.maxSize(config.poolSize)
+            // Keep 2 connections open even when idle (fewer when the pool itself is smaller).
             it.minSize(minOf(2, config.poolSize))
+            // A request waits at most 2 s for a free connection, then fails (the bounded wait in the class comment).
             it.maxWaitTime(2, TimeUnit.SECONDS)
+            // A connection that was not used for 60 s is closed.
             it.maxConnectionIdleTime(60, TimeUnit.SECONDS)
             it.addConnectionPoolListener(MongoMetricsConnectionPoolListener(registry))
         }.addCommandListener(MongoMetricsCommandListener(registry))
@@ -81,7 +86,10 @@ class MongoHealthCheck(private val database: MongoDatabase, private val timeout:
 
     /** Errors propagate to the readiness use case, which reports DOWN and logs the cause once. */
     override suspend fun isHealthy(): Boolean = withTimeoutOrNull(timeout) {
+        // `hello` asks the server about its role; the 1 is only the value the command needs.
+        // See https://www.mongodb.com/docs/manual/reference/command/hello/
         val hello = database.runCommand(Document("hello", 1), ReadPreference.primary(), Document::class.java)
+        // `isWritablePrimary` is true on the primary; older servers call the same field `ismaster`.
         hello.getBoolean("isWritablePrimary", false) || hello.getBoolean("ismaster", false)
     } ?: false
 }

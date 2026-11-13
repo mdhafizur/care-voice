@@ -53,6 +53,7 @@ data class ClaudeSettings(
 class ClaudeGuidanceWriter(private val settings: ClaudeSettings, private val httpClient: HttpClient) : GuidanceWriter {
     override val generator: GuidanceGenerator = GuidanceGenerator.CLAUDE
 
+    /** The Messages API endpoint (`POST /v1/messages`). */
     private val endpoint = settings.baseUrl.trimEnd('/') + "/v1/messages"
 
     /**
@@ -63,6 +64,7 @@ class ClaudeGuidanceWriter(private val settings: ClaudeSettings, private val htt
         val response =
             httpClient.post(endpoint) {
                 timeout { requestTimeoutMillis = settings.timeout.inWholeMilliseconds }
+                // Anthropic's API headers: `x-api-key` carries the key, `anthropic-version` picks the API version.
                 header("x-api-key", settings.apiKey)
                 header("anthropic-version", API_VERSION)
                 setBody(TextContent(requestBody(situation, sources), ContentType.Application.Json))
@@ -88,7 +90,13 @@ class ClaudeGuidanceWriter(private val settings: ClaudeSettings, private val htt
     }.toString()
 
     companion object {
+        /**
+         * Value of the required `anthropic-version` header: the version of the Messages API format this code uses.
+         * See https://docs.anthropic.com/en/api/versioning
+         */
         const val API_VERSION = "2023-06-01"
+
+        /** `max_tokens`: the most tokens (pieces of words) the answer may have; the API stops the answer there. */
         const val MAX_TOKENS = 700
         const val DECLINE = GuidancePrompt.DECLINE
 
@@ -98,7 +106,7 @@ class ClaudeGuidanceWriter(private val settings: ClaudeSettings, private val htt
         fun userPrompt(situation: String, sources: List<ScoredChunk>): String =
             GuidancePrompt.userPrompt(situation, sources)
 
-        /** The text of the first content block of a Messages API response. */
+        /** The text of the first `text` content block of a Messages API response (other block types are skipped). */
         fun textOf(responseBody: String): String =
             Json.parseToJsonElement(responseBody).jsonObject.getValue("content").jsonArray
                 .first { it.jsonObject["type"]?.jsonPrimitive?.contentOrNull == "text" }

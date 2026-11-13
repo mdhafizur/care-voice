@@ -132,7 +132,14 @@ class RedisRateLimiter(
         const val KEY_PREFIX = "carevoice:ratelimit:"
         const val FAIL_OPEN_METRIC = "carevoice.ratelimit.fail.open"
 
-        /** Returns {count, pttl}. PEXPIRE only on the first hit, so the window is fixed, not sliding. */
+        /**
+         * Returns {count, pttl}. PEXPIRE only on the first hit, so the window is fixed, not sliding.
+         *
+         * KEYS[1] is the counter key, ARGV[1] the window length in milliseconds. INCR adds 1 (a new key starts at 1),
+         * PEXPIRE sets the expiry in milliseconds, and PTTL returns the milliseconds left, or a negative number when
+         * the key has no expiry (-1) or does not exist (-2). In that case the script sets the expiry again, so a
+         * counter can never live forever. Redis commands: https://redis.io/docs/latest/commands/
+         */
         internal val SCRIPT =
             """
             local count = redis.call('INCR', KEYS[1])
@@ -183,6 +190,7 @@ class InMemoryRateLimiter(private val clock: Clock = Clock.systemUTC()) : Distri
     }
 
     private companion object {
+        /** Number of keys above which [tryAcquire] removes windows that have ended (cheap housekeeping). */
         const val MAX_KEYS = 100_000
     }
 }

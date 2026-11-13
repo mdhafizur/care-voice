@@ -46,4 +46,5 @@ fun Route.authRoutes(deps: Dependencies) {
     }
 }
 
+/** Rate-limit scope for login attempts, counted per client IP (10 per minute, docs/CONTRACTS.md, section 4). */
 const val LOGIN_SCOPE = "login-ip"

@@ -154,8 +154,16 @@ internal class OutboxRepository(private val dataSource: DataSource) {
     private fun String.limitForColumn() = if (length <= MAX_ERROR_LENGTH) this else take(MAX_ERROR_LENGTH - 1) + "…"
 
     private companion object {
+        /**
+         * Longest error text kept in `last_error`, in characters; longer text is cut by [limitForColumn]. The column
+         * itself is TEXT (migration V1) and has no limit of its own.
+         */
         const val MAX_ERROR_LENGTH = 500
 
+        /**
+         * The fence (see the class comment): the row must still be PENDING and still carry our lease in
+         * `next_attempt_at`. Its two `?` are bound last, by [update].
+         */
         const val FENCE = "WHERE id = ? AND status = 'PENDING' AND next_attempt_at = ?"
 
         // The CTE selects and locks the due rows (the partial index outbox_pending_idx serves WHERE + ORDER BY), the

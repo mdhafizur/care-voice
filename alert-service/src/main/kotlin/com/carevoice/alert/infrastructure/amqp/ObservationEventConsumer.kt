@@ -114,6 +114,7 @@ class ObservationEventConsumer(
             .builder("carevoice.amqp.processing")
             .description("Time to process one consumed observation event, from delivery to ack")
             .publishPercentileHistogram()
+            // The histogram buckets (time ranges) cover 1 ms to 10 s per event.
             .minimumExpectedValue(JavaDuration.ofMillis(1))
             .maximumExpectedValue(JavaDuration.ofSeconds(10))
             .register(registry)
@@ -653,21 +654,39 @@ class ObservationEventConsumer(
     }
 
     companion object {
+        /** Worker coroutines that process deliveries side by side, when no other number is given. */
         const val DEFAULT_WORKERS = 8
 
         /** One delivery plus one per retry tier: the event is dead-lettered when delivery 6 fails (after ~43 min). */
         val MAX_DELIVERIES: Int = AmqpTopology.RETRY_DELAYS.size + 1
         const val HEADER_SCHEMA_VERSION = "schemaVersion"
         const val HEADER_REQUEST_ID = "requestId"
+
+        /** W3C Trace Context header with the trace id and span id: https://www.w3.org/TR/trace-context/ */
         const val HEADER_TRACEPARENT = "traceparent"
         const val HEADER_DEAD_LETTER_REASON = "x-carevoice-dead-letter-reason"
         const val HEADER_ORIGINAL_ROUTING_KEY = "x-carevoice-original-routing-key"
 
         /** Number of the NEXT delivery, set by this consumer when it schedules a retry. */
         const val HEADER_ATTEMPT = "x-carevoice-attempt"
+
+        /** How long to wait for the broker's publisher confirm of a retry or dead letter (5 s, in milliseconds). */
         private const val CONFIRM_TIMEOUT_MS = 5_000L
+
+        /** How long closing the connection may wait for the broker (5 s, in milliseconds). */
         private const val CLOSE_TIMEOUT_MS = 5_000
+
+        /**
+         * A request id we accept into the logs: 1 to 64 letters, digits, `.`, `_`, `:` or `-`. The same rule as for the
+         * HTTP `X-Request-Id` header (docs/CONTRACTS.md). Any other value is left out.
+         */
         private val REQUEST_ID_PATTERN = Regex("[A-Za-z0-9._:-]{1,64}")
+
+        /**
+         * W3C `traceparent`: `version-traceId-parentId-flags` in lowercase hex with 2, 32, 16 and 2 digits, e.g.
+         * `00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01`. Group 1 is the trace id, group 2 the span id
+         * (the parent id). Format: https://www.w3.org/TR/trace-context/#traceparent-header
+         */
         private val TRACEPARENT_PATTERN = Regex("^[0-9a-f]{2}-([0-9a-f]{32})-([0-9a-f]{16})-[0-9a-f]{2}$")
 
         /**
@@ -688,6 +707,7 @@ class ObservationEventConsumer(
          * retry, 1 when absent) plus how often THIS queue rejected the message since then, read from the `x-death`
          * header the broker maintains when dead-lettering (`count` per queue + reason). Rejections happen only on the
          * fallback path; a scheduled retry starts a fresh `x-death` history, so nothing is counted twice.
+         * The `x-death` header is described in https://www.rabbitmq.com/docs/dlx
          */
         fun deliveryAttempt(headers: Map<String, Any?>): Int {
             val explicit = when (val value = headers[HEADER_ATTEMPT]) {
@@ -696,6 +716,8 @@ class ObservationEventConsumer(
                 else -> value.toString().toIntOrNull()
             }?.coerceAtLeast(1) ?: 1
             val deaths = headers["x-death"] as? List<*> ?: return explicit
+            // `reason` says why the broker dead-lettered the message: `rejected` (nack or reject without requeue),
+            // `expired` (its TTL ran out), `maxlen` (the queue was full) or `delivery_limit` (too many deliveries).
             val rejected =
                 deaths
                     .filterIsInstance<Map<*, *>>()

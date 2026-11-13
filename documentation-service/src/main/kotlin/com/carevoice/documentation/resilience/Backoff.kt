@@ -54,5 +54,9 @@ object Backoff {
         require(cap.inWholeNanoseconds < Long.MAX_VALUE) { "cap must be finite and below 292 years but was $cap" }
     }
 
+    /**
+     * A Long has 64 bits, and the JVM uses only the low 6 bits of a shift distance (`x shl 64 == x`). So from 63
+     * shifts on, [ceiling] returns the cap directly instead of shifting.
+     */
     private const val MAX_SHIFT = 63
 }

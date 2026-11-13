@@ -39,6 +39,7 @@ class AlertApi(
     val eventConcurrency: Int = DEFAULT_EVENT_CONCURRENCY,
 ) {
     companion object {
+        /** Event-processing slots per instance: the `Semaphore(64)` of docs/CONTRACTS.md, section 9. */
         const val DEFAULT_EVENT_CONCURRENCY = 64
         const val OPENAPI_RESOURCE = "openapi/alert-service.yaml"
     }
@@ -204,6 +205,7 @@ private fun Route.operationsRoutes(api: AlertApi) {
                 .getResource(AlertApi.OPENAPI_RESOURCE)
                 ?.readText()
                 ?: error("OpenAPI resource ${AlertApi.OPENAPI_RESOURCE} is missing from the classpath")
+        // Any cache (`public`) may keep the spec for 300 seconds (5 minutes).
         call.response.header(HttpHeaders.CacheControl, "public, max-age=300")
         call.respondText(spec, ContentType.parse("application/yaml"))
     }
@@ -212,4 +214,8 @@ private fun Route.operationsRoutes(api: AlertApi) {
 
 private const val LIMIT_MESSAGE = "must be an integer between ${ListAlerts.MIN_LIMIT} and ${ListAlerts.MAX_LIMIT}"
 
+/**
+ * Prometheus text exposition format, version 0.0.4:
+ * https://prometheus.io/docs/instrumenting/exposition_formats/
+ */
 private val PROMETHEUS_CONTENT_TYPE = ContentType.parse("text/plain; version=0.0.4; charset=utf-8")

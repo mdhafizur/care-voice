@@ -55,6 +55,11 @@ data class JwtSettings(val secret: ByteArray, val issuer: String, val audience: 
 
 const val JWT_AUTH = "jwt"
 private const val REALM = "carevoice"
+
+/**
+ * Clock difference, in seconds, allowed when the time claims `exp`, `nbf` and `iat` are checked, so a small gap
+ * between the issuer's clock and ours does not reject a valid token.
+ */
 private const val LEEWAY_SECONDS = 5L
 
 private val authLog = LoggerFactory.getLogger("com.carevoice.alert.api.Authentication")
@@ -81,6 +86,7 @@ fun AuthenticationConfig.configureJwt(settings: JwtSettings) {
         validate { credential ->
             val payload = credential.payload
             val subject = payload.subject?.takeIf { it.isNotBlank() }
+            // Claims of docs/CONTRACTS.md, section 5: `sub` = username, `tenant`, `ward`, `roles` = role names.
             val tenant = payload.getClaim("tenant").asString()?.takeIf { it.isNotBlank() }
             val ward = payload.getClaim("ward").asString()?.takeIf { it.isNotBlank() }
             val roles =
@@ -109,6 +115,7 @@ fun AuthenticationConfig.configureJwt(settings: JwtSettings) {
                 LogType.REQUEST,
                 "Authentication failed",
                 "reason" to reason,
+                // The path is user input, so at most 256 characters of it are logged.
                 "path" to call.request.path().take(256),
             )
             call.response.header(HttpHeaders.WWWAuthenticate, "Bearer realm=\"$REALM\"")

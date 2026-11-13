@@ -38,7 +38,10 @@ import java.time.Duration
 import java.util.UUID
 import kotlin.time.Duration.Companion.minutes
 
-/** Valid incoming request ids (docs/CONTRACTS.md, section 6); anything else is replaced by a generated one. */
+/**
+ * Valid incoming request ids (docs/CONTRACTS.md, section 6): 1 to 64 characters, each a letter, a digit, `.`, `_`,
+ * `:` or `-`. Anything else is replaced by a generated one.
+ */
 val REQUEST_ID_PATTERN = Regex("[A-Za-z0-9._:-]{1,64}")
 
 val PER_USER_RATE_LIMIT = RateLimitName("per-user")
@@ -67,7 +70,9 @@ fun Application.installHttpPlugins(jwt: JwtSettings, rateLimitPerMinute: Int, re
     // Access log, safe default headers, and no caching of answers unless a route sets Cache-Control.
     install(AccessLog)
     install(DefaultHeaders) {
+        // nosniff: the browser must not guess a content type other than the one sent (docs/CONTRACTS.md, section 11).
         header("X-Content-Type-Options", "nosniff")
+        // no-referrer: the browser sends no `Referer` header when it leaves a page.
         header("Referrer-Policy", "no-referrer")
     }
     install(DefaultNoStore)
@@ -83,6 +88,8 @@ fun Application.installHttpPlugins(jwt: JwtSettings, rateLimitPerMinute: Int, re
     // Metrics: request time histograms plus JVM and process metrics.
     install(MicrometerMetrics) {
         this.registry = registry
+        // Buckets of docs/CONTRACTS.md, section 10: SLO bounds at 100 ms, 300 ms (the dashboard's "% under 300 ms")
+        // and 1 s; durations between 5 ms and 10 s are expected.
         distributionStatisticConfig =
             DistributionStatisticConfig
                 .builder()
@@ -126,6 +133,7 @@ private val CallStartKey = AttributeKey<Long>("CallStartNanos")
  */
 private fun Application.recordRouteTemplates() {
     monitor.subscribe(RoutingRoot.RoutingCallStarted) { call ->
+        // Ktor's route text has selector parts such as `/(method:GET)`; the regex removes every `/(...)` part.
         val template =
             call.route
                 .toString()

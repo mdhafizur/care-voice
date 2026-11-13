@@ -19,10 +19,15 @@ import kotlin.time.Duration.Companion.seconds
 
 /** HTTP-level limits (docs/CONTRACTS.md, sections 6, 7 and 11). */
 data class HttpSettings(
+    /** Requests per signed-in user per minute (`RATE_LIMIT_PER_MINUTE`, default 120). */
     val rateLimitPerMinute: Int = 120,
+    /** Login attempts per client IP per minute; fixed at 10 (docs/CONTRACTS.md, section 4). */
     val loginRateLimitPerMinute: Int = 10,
+    /** Largest accepted request body, 64 KiB; a bigger one gets 413 (docs/CONTRACTS.md, section 6). */
     val maxBodyBytes: Long = 64L * 1024,
+    /** How often the SSE stream sends a heartbeat comment, so proxies do not close an idle connection. */
     val sseHeartbeat: Duration = 15.seconds,
+    /** Time limit for one request (`REQUEST_TIMEOUT_MS`, default 30 s); after it the answer is 503. */
     val requestTimeout: Duration = 30.seconds,
     /** Proxies whose `X-Forwarded-For` is believed (`TRUSTED_PROXIES`); empty = the header is ignored. */
     val trustedProxies: List<IpNetwork> = emptyList(),

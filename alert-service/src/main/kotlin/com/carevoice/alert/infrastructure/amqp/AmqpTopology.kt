@@ -39,6 +39,10 @@ object AmqpTopology {
     const val RETRY_QUEUE = "alert-service.observations.retry"
     const val DEAD_LETTER_QUEUE = "alert-service.observations.dlq"
 
+    /**
+     * Topic pattern for the events this queue takes. In a topic pattern `*` matches exactly one dot-separated word,
+     * here the schema version of the routing key (`observation.recorded.v1`, `observation.recorded.v2`, ...).
+     */
     const val BINDING_PATTERN = "observation.recorded.*"
 
     /** Routing key of messages going from [QUEUE] to [RETRY_QUEUE] and of poison messages sent to the DLX. */
@@ -47,6 +51,11 @@ object AmqpTopology {
     /** Routing key of messages returning from [RETRY_QUEUE]; matches no `observation.recorded.*` binding. */
     const val RETRY_ROUTING_KEY = "retry.$QUEUE"
 
+    /**
+     * Value of the quorum-queue argument `x-delivery-limit` on [QUEUE]: when one message went back to the queue without
+     * an ack more than this many times (for example because a consumer crashed), the broker dead-letters it to
+     * [RETRY_EXCHANGE].
+     */
     const val DELIVERY_LIMIT = 10
 
     /** Wait before delivery n + 1 after delivery n failed; once all are used the event is dead-lettered. */
@@ -72,21 +81,30 @@ object AmqpTopology {
      */
     fun declare(channel: Channel) {
         // Step 1: the three exchanges (an exchange is where messages are published; it routes them to queues).
+        // The last argument `true` makes each exchange durable: it survives a broker restart.
         channel.exchangeDeclare(EVENTS_EXCHANGE, BuiltinExchangeType.TOPIC, true)
         channel.exchangeDeclare(RETRY_EXCHANGE, BuiltinExchangeType.DIRECT, true)
         channel.exchangeDeclare(DEAD_LETTER_EXCHANGE, BuiltinExchangeType.DIRECT, true)
 
         // Step 2: the main queue. A message it gives up on (too many deliveries, or a reject) is dead-lettered
         // (moved on) to the retry exchange. It also gets the events that come back from the retry queues.
+        // The three flags after the name: durable = true (the queue survives a broker restart), exclusive = false
+        // (other connections, so other pods, may use it), autoDelete = false (it stays when no consumer is left).
+        // The `x-...` queue arguments are explained in https://www.rabbitmq.com/docs/queues (optional arguments),
+        // https://www.rabbitmq.com/docs/quorum-queues and https://www.rabbitmq.com/docs/dlx (dead lettering).
         channel.queueDeclare(
             QUEUE,
             true,
             false,
             false,
             mapOf<String, Any>(
+                // Queue type: a quorum queue (replicated across the broker nodes, see the class comment).
                 "x-queue-type" to "quorum",
+                // Dead-letter a message that failed delivery more than DELIVERY_LIMIT times.
                 "x-delivery-limit" to DELIVERY_LIMIT,
+                // Where dead-lettered messages go: the retry exchange ...
                 "x-dead-letter-exchange" to RETRY_EXCHANGE,
+                // ... with this routing key (without it, the message would keep its own routing key).
                 "x-dead-letter-routing-key" to QUEUE_ROUTING_KEY,
             ),
         )
@@ -96,15 +114,21 @@ object AmqpTopology {
         // Step 3: one retry queue per delay. A message waits there for its TTL (time to live), then goes back to
         // the events exchange with the key that only the main queue listens to.
         RETRY_DELAYS.forEachIndexed { tier, delay ->
+            // Same flags as the main queue: durable, not exclusive, not auto-deleted.
             channel.queueDeclare(
                 retryQueue(tier),
                 true,
                 false,
                 false,
                 mapOf<String, Any>(
+                    // Queue type: quorum, like the main queue.
                     "x-queue-type" to "quorum",
+                    // Message TTL in milliseconds: how long a message waits in this tier
+                    // (https://www.rabbitmq.com/docs/ttl).
                     "x-message-ttl" to delay.inWholeMilliseconds.toInt(),
+                    // When the TTL is over, the message is dead-lettered back to the events exchange ...
                     "x-dead-letter-exchange" to EVENTS_EXCHANGE,
+                    // ... with the routing key that only the main queue is bound to.
                     "x-dead-letter-routing-key" to RETRY_ROUTING_KEY,
                 ),
             )
@@ -112,6 +136,7 @@ object AmqpTopology {
         }
 
         // Step 4: the dead-letter queue, where events end up after all retries are used.
+        // Same flags as the other queues; its only argument makes it a quorum queue.
         channel.queueDeclare(DEAD_LETTER_QUEUE, true, false, false, mapOf<String, Any>("x-queue-type" to "quorum"))
         channel.queueBind(DEAD_LETTER_QUEUE, DEAD_LETTER_EXCHANGE, QUEUE_ROUTING_KEY)
     }

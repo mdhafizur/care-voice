@@ -84,6 +84,7 @@ internal object MongoErrors {
         is MongoWriteConcernException,
         -> true
 
+        // Error labels are tags the server puts on an error. `RetryableWriteError` means the write may be sent again.
         is MongoException ->
             e.hasErrorLabel(MongoException.TRANSIENT_TRANSACTION_ERROR_LABEL) ||
                 e.hasErrorLabel("RetryableWriteError") ||

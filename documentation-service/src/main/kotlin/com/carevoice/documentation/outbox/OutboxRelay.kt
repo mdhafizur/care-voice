@@ -434,8 +434,16 @@ class OutboxRelay(
 
         private val log = LoggerFactory.getLogger(OutboxRelay::class.java)
 
+        /** Longest pause between two failed claims (for example while the database is down). */
         private val MAX_CLAIM_BACKOFF = 30.seconds
+
+        /**
+         * Highest attempt number passed to [Backoff.fullJitter] for a failed claim. 2^16 = 65,536, so any poll
+         * interval of 1 ms or more already reaches [MAX_CLAIM_BACKOFF] here; a higher number would change nothing.
+         */
         private const val MAX_CLAIM_BACKOFF_EXPONENT = 16
+
+        /** The gauges are refreshed at most once per second, even when [OutboxSettings.pollInterval] is shorter. */
         private val MIN_STATS_INTERVAL = 1.seconds
 
         /**

@@ -14,6 +14,8 @@ import kotlinx.serialization.json.jsonObject
  */
 internal object ApiErrors {
     private val json: Json = Json.Default
+
+    /** An error code we log: 1 to 64 letters, digits, `_` or `.`. Anything else is not logged. */
     private val CODE = Regex("^[A-Za-z0-9_.]{1,64}$")
 
     /** Returns the error code from an error response body, or null when there is none or it looks unsafe to log. */

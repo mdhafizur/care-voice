@@ -104,7 +104,7 @@ class CheckReadiness(private val checks: List<DependencyHealthCheck>) {
     }
 
     private companion object {
-        /** The slow-query threshold: a dependency check this slow is worth a DEBUG line even when UP. */
+        /** Slow-check threshold (ADR-0017): a check that takes this long or longer gets a DEBUG line even when UP. */
         const val SLOW_CHECK_MS = 500L
         val log: Logger = LoggerFactory.getLogger(CheckReadiness::class.java)
     }

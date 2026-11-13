@@ -81,7 +81,8 @@ import kotlin.time.TimeSource
  * Topology: this publisher declares only the exchanges (idempotent, same arguments as the consumer and the operator
  * docs). Queues and bindings belong to the consumer.
  *
- * @param amqpUri e.g. `amqp://user:pass@rabbitmq:5672/carevoice`.
+ * @param amqpUri e.g. `amqp://user:pass@rabbitmq:5672/carevoice` (5672 is the standard AMQP port, `carevoice` the
+ *   virtual host).
  * @param confirmTimeout how long to wait for the broker's ack; also used as the TCP connect and handshake timeout.
  */
 class AmqpEventPublisher(
@@ -312,6 +313,8 @@ class AmqpEventPublisher(
         init {
             channel.addReturnListener(
                 ReturnCallback { ret ->
+                    // replyCode is an AMQP reply code, here usually 312 NO_ROUTE: no queue is bound for this
+                    // routing key. Official list: https://www.rabbitmq.com/amqp-0-9-1-reference.html
                     returned.set("unroutable: ${ret.replyCode} ${ret.replyText}")
                 },
             )
@@ -324,6 +327,8 @@ class AmqpEventPublisher(
          */
         fun publishAndConfirm(message: AmqpMessage, timeout: Duration): PublishResult {
             returned.set(null)
+            // The `true` is the `mandatory` flag: an unroutable message comes back with `basic.return` (see the
+            // class comment) instead of being dropped.
             channel.basicPublish(message.exchange, message.routingKey, true, message.properties, message.body)
             val acked =
                 try {
@@ -350,6 +355,7 @@ class AmqpEventPublisher(
     }
 
     companion object {
+        /** First pause between startup connect attempts; it doubles after each failure, up to [MAX_CONNECT_RETRY]. */
         private val INITIAL_CONNECT_RETRY = 1.seconds
         private val MAX_CONNECT_RETRY = 30.seconds
 
@@ -363,9 +369,21 @@ class AmqpEventPublisher(
         const val PUBLISH_TOTAL_METRIC = "carevoice.amqp.publish"
 
         private val RESULTS = listOf("published", "retry", "dead", "circuit_open")
+
+        /** Most idle channels kept in the pool for reuse; a channel returned to a full pool is closed. */
         private const val DEFAULT_MAX_IDLE_CHANNELS = 16
+
+        /** Pause between automatic reconnect attempts after the connection was lost, in milliseconds (5 s). */
         private const val NETWORK_RECOVERY_INTERVAL_MS = 5_000L
+
+        /**
+         * AMQP heartbeat timeout asked of the broker, in seconds. Both sides send small heartbeat frames, so a dead
+         * TCP connection is noticed after about this long, not only when the next publish fails.
+         * https://www.rabbitmq.com/docs/heartbeats
+         */
         private const val HEARTBEAT_SECONDS = 30
+
+        /** How long [close] waits for the connection close to finish, in milliseconds (5 s). */
         private const val CLOSE_TIMEOUT_MS = 5_000
 
         private val log = LoggerFactory.getLogger(AmqpEventPublisher::class.java)
@@ -396,7 +414,13 @@ class AmqpMessage(
  */
 object AmqpMessages {
     const val CONTENT_TYPE = "application/json"
+
+    /**
+     * AMQP 0-9-1 `delivery-mode` 2 = persistent: the broker writes the message to disk (1 would be transient, kept
+     * in memory only). Official reference: https://www.rabbitmq.com/amqp-0-9-1-reference.html
+     */
     const val PERSISTENT = 2
+
     const val HEADER_SCHEMA_VERSION = "schemaVersion"
     const val HEADER_REQUEST_ID = "requestId"
     const val HEADER_TRACEPARENT = "traceparent"

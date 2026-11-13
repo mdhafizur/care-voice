@@ -50,6 +50,10 @@ class HashingEmbedder(private val dimensions: Int = DEFAULT_DIMENSIONS) : Embedd
     }
 
     companion object {
+        /**
+         * Default vector length (number of hash positions). It is part of the model name (`hashing-v1-512`), and the
+         * stored corpus is kept per model name, so vectors of different lengths are never compared.
+         */
         const val DEFAULT_DIMENSIONS = 512
 
         private val STOP_WORDS =
@@ -59,18 +63,27 @@ class HashingEmbedder(private val dimensions: Int = DEFAULT_DIMENSIONS) : Embedd
                     "you our its into out up down"
                 ).split(' ').toSet()
 
-        /** Lowercase alphanumeric words, stop words removed, a plural "s" stripped ("readings" -> "reading"). */
+        /**
+         * Lowercase alphanumeric words of at least 2 characters, stop words removed, and a plural "s" stripped from
+         * words longer than 4 letters that do not end in "ss" ("readings" -> "reading", "class" stays).
+         */
         fun tokenize(text: String): List<String> = text
             .lowercase(Locale.ROOT)
             .split(Regex("[^a-z0-9]+"))
             .filter { it.length >= 2 && it !in STOP_WORDS }
             .map { if (it.length > 4 && it.endsWith("s") && !it.endsWith("ss")) it.dropLast(1) else it }
 
-        /** 32-bit FNV-1a: stable across JVMs and runs (String.hashCode would also be stable, but is weak). */
+        /**
+         * 32-bit FNV-1a: stable across JVMs and runs (String.hashCode would also be stable, but is weak).
+         * Algorithm and constants: http://www.isthe.com/chongo/tech/comp/fnv/
+         */
         fun fnv1a(text: String): Int {
+            // The 32-bit FNV offset basis 0x811C9DC5. It is larger than Int.MAX_VALUE, so as an Int it is negative.
             var hash = -0x7ee3623b // 0x811C9DC5
             for (byte in text.toByteArray(Charsets.UTF_8)) {
+                // `and 0xff` reads the byte as 0..255 (Kotlin bytes are signed).
                 hash = hash xor (byte.toInt() and 0xff)
+                // 16_777_619 (0x01000193) is the 32-bit FNV prime.
                 hash *= 16_777_619
             }
             return hash

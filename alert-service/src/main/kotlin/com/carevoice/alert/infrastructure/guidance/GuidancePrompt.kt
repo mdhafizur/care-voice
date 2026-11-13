@@ -13,6 +13,7 @@ import kotlinx.serialization.json.jsonPrimitive
  * Gemini (whose output is held to a JSON schema) an empty step list.
  */
 object GuidancePrompt {
+    /** The exact answer Claude must give when the excerpts do not cover the alert; [parse] turns it into null. */
     const val DECLINE = "NO_GUIDANCE"
 
     /** At most this many steps; also the `maxItems` of Gemini's response schema. */

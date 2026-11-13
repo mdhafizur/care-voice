@@ -202,6 +202,7 @@ abstract class HttpAiVitalExtractor(
         when {
             status in 200..299 -> Attempt.Answered(response.bodyAsText())
 
+            // 429 Too Many Requests (rate limited) or any 5xx server error, e.g. Anthropic's 529 "overloaded".
             status == 429 || status >= 500 -> Attempt.Failed(
                 Outcome.ERROR,
                 retryable = true,

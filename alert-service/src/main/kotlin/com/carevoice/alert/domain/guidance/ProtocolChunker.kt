@@ -9,6 +9,7 @@ package com.carevoice.alert.domain.guidance
  * section cannot dominate the context window. Text before the first `##` (title line, notices) is not chunked.
  */
 object ProtocolChunker {
+    /** Longest section body, in characters, kept as one chunk; a longer one is split at blank lines (see above). */
     const val MAX_CHARS = 1_200
 
     /**
@@ -55,7 +56,9 @@ object ProtocolChunker {
         if (body.length <= MAX_CHARS) return listOf(body)
         val parts = mutableListOf<String>()
         val current = StringBuilder()
+        // Paragraphs are separated by a blank line: two line breaks with only whitespace between them.
         for (paragraph in body.split(Regex("\n\\s*\n"))) {
+            // + 2 counts the "\n\n" that joins this paragraph to the text before it.
             if (current.isNotEmpty() && current.length + paragraph.length + 2 > MAX_CHARS) {
                 parts += current.toString().trim()
                 current.clear()

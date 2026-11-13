@@ -13,8 +13,8 @@ import kotlin.time.toJavaDuration
 
 /**
  * Circuit breaker tuning. The defaults are the contract values (docs/CONTRACTS.md, section 8): open when at least
- * 50 % of the last 20 calls failed, stay open for 30 s, then let a few probe calls through (half-open) and close
- * again only if they succeed.
+ * 50 % of the last 20 calls failed (and at least 20 calls were made), stay open for 30 s, then let 3 probe calls
+ * through (half-open) and close again only if they succeed.
  *
  * Why a breaker at all: when a dependency is down, every call would otherwise wait for its full timeout. The breaker
  * turns that into an immediate "not now", which keeps our own threads, connections and latency free while the

@@ -31,7 +31,13 @@ data class AppConfig(
         const val DEFAULT_JWT_AUDIENCE = "carevoice"
         const val DEFAULT_RABBITMQ_PREFETCH = 32
         const val DEFAULT_RATE_LIMIT_PER_MINUTE = 120
+
+        /**
+         * HS256 needs a key of at least 256 bits (32 bytes): RFC 7518, section 3.2,
+         * https://www.rfc-editor.org/rfc/rfc7518#section-3.2
+         */
         const val MIN_JWT_SECRET_BYTES = 32
+
         val DEFAULT_REQUEST_TIMEOUT: Duration = 30.seconds
 
         /**
@@ -132,12 +138,16 @@ private class ConfigLoader(private val env: Map<String, String>) {
     /** Reads and checks every value; throws ConfigException with all errors when anything is missing or invalid. */
     fun load(): AppConfig {
         // HTTP port and MongoDB.
+        // 65_535 is the highest TCP port number.
         val httpPort = int("HTTP_PORT", AppConfig.DEFAULT_HTTP_PORT, 1..65_535)
         val mongoUri = required("MONGO_URI")
         if (mongoUri != null && !mongoUri.startsWith("mongodb://") && !mongoUri.startsWith("mongodb+srv://")) {
             errors += "MONGO_URI must start with mongodb:// or mongodb+srv://"
         }
         val mongoDatabase = optional("MONGO_DATABASE") ?: AppConfig.DEFAULT_MONGO_DATABASE
+        // MongoDB database names must be shorter than 64 characters
+        // (https://www.mongodb.com/docs/manual/reference/limits/#naming-restrictions).
+        // This service also allows only letters, digits, `_` and `-`.
         if (!mongoDatabase.matches(Regex("[A-Za-z0-9_-]{1,63}"))) {
             errors += "MONGO_DATABASE must match [A-Za-z0-9_-]{1,63}"
         }
@@ -157,6 +167,7 @@ private class ConfigLoader(private val env: Map<String, String>) {
         if (rabbitUrl != null) validateAmqpUrl(rabbitUrl)
         val prefetch = int("RABBITMQ_PREFETCH", AppConfig.DEFAULT_RABBITMQ_PREFETCH, 1..1_000)
         val rateLimit = int("RATE_LIMIT_PER_MINUTE", AppConfig.DEFAULT_RATE_LIMIT_PER_MINUTE, 1..100_000)
+        // Default 30_000 ms, the same as AppConfig.DEFAULT_REQUEST_TIMEOUT (30 s); allowed are 1 s to 2 min.
         val requestTimeoutMs = int("REQUEST_TIMEOUT_MS", 30_000, 1_000..120_000)
         val guidance = guidance()
 
@@ -277,5 +288,8 @@ private class ConfigLoader(private val env: Map<String, String>) {
     }
 }
 
-/** Replaces `user:password@` in a connection string so it can be logged. */
+/**
+ * Replaces `user:password@` in a connection string so it can be logged. The regex matches the text right after
+ * `://` up to and including the next `@`, as long as that text has no `/` (so an `@` in the path is never touched).
+ */
 internal fun redactUserInfo(url: String): String = url.replace(Regex("(?<=://)[^@/]+@"), "***@")

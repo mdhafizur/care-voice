@@ -33,6 +33,8 @@ import kotlin.time.toJavaDuration
 /**
  * Owns the Lettuce client and its two connections (commands, pub/sub). Accepts `redis://`, `rediss://` and Sentinel
  * URLs (`redis-sentinel://h1:26379,h2:26379/0#mymaster`); with Sentinel, Lettuce follows a failover to the new primary.
+ * `rediss://` is Redis over TLS. In the Sentinel example, 26379 is Sentinel's default port, `/0` the Redis database
+ * number and `mymaster` the name Sentinel uses for the primary.
  *
  * Redis is NOT on the critical path (docs/CONTRACTS.md, section 9a): when it is unreachable at startup the service
  * starts anyway and [start] keeps trying to connect in the background; once connected, Lettuce reconnects (and

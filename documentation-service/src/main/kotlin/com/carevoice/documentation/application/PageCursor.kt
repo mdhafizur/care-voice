@@ -24,6 +24,10 @@ data class PageCursor(val direction: Direction, val recordedAt: Instant, val id:
     )
 
     companion object {
+        /**
+         * A cursor made by [encode] has at most about 92 characters (base64url of up to 69 bytes). Longer input
+         * cannot be ours, so it is refused before decoding.
+         */
         private const val MAX_LENGTH = 200
 
         /** Returns null for a malformed cursor (→ 400). A well-formed cursor that matches no row yields the first page. */

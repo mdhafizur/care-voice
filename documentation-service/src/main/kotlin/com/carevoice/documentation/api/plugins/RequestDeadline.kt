@@ -56,4 +56,5 @@ fun Application.installRequestDeadline(timeout: Duration, exemptPaths: Set<Strin
     }
 }
 
+/** Longest part of the request path, in characters, that goes into the log: the path is user input. */
 private const val MAX_LOGGED_PATH = 256

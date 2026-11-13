@@ -24,6 +24,7 @@ fun Route.operationalRoutes(deps: Dependencies) {
     get("/readyz") {
         val report = deps.readiness.check()
         val body = HealthResponse(report.overall.name, report.checks.associate { it.name to it.status.name })
+        // Retry-After: 5 asks the caller to check again in 5 seconds.
         if (!report.ready) call.response.header(HttpHeaders.RetryAfter, "5")
         call.respondJson(
             HealthResponse.serializer(),
@@ -51,4 +52,9 @@ fun Route.operationalRoutes(deps: Dependencies) {
 }
 
 const val OPENAPI_RESOURCE = "openapi/documentation-service.yaml"
+
+/**
+ * The Prometheus text format, version 0.0.4: the plain-text format Prometheus reads when it collects metrics.
+ * See https://prometheus.io/docs/instrumenting/exposition_formats/
+ */
 const val PROMETHEUS_CONTENT_TYPE = "text/plain; version=0.0.4; charset=utf-8"

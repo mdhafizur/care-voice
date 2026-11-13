@@ -15,6 +15,11 @@ import java.util.Base64
 object CursorCodec {
     private const val AFTER = "a"
     private const val BEFORE = "b"
+
+    /**
+     * Longest cursor accepted; longer input is rejected before any decoding work. A cursor made by [encode] is shorter,
+     * because its id has at most [ProcessObservationEvent.MAX_ID_LENGTH] characters.
+     */
     private const val MAX_ENCODED_LENGTH = 512
 
     /** Turns [keyset] into the opaque cursor string; [decode] reverses it. */

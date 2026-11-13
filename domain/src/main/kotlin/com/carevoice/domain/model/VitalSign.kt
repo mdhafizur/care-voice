@@ -35,7 +35,13 @@ data class BloodPressure private constructor(val systolic: Int, val diastolic: I
     override fun toString(): String = "$systolic/$diastolic mmHg"
 
     companion object {
+        /**
+         * Plausible systolic values in mmHg (millimetres of mercury, the unit of blood pressure). A value outside
+         * the range is treated as implausible: it is rejected and never stored (ADR-0009).
+         */
         val SYSTOLIC_RANGE = 50..260
+
+        /** Plausible diastolic values in mmHg; see [SYSTOLIC_RANGE]. */
         val DIASTOLIC_RANGE = 30..160
 
         /** Checks both ranges and that diastolic is lower than systolic; the first failed rule becomes the error. */
@@ -69,6 +75,7 @@ value class Pulse private constructor(val bpm: Int) : VitalSign {
     override fun toString(): String = "$bpm bpm"
 
     companion object {
+        /** Plausible pulse values in beats per minute (bpm). A value outside is rejected, never stored (ADR-0009). */
         val RANGE = 20..250
 
         /** Accepts only values in [RANGE] (beats per minute); anything else is an OutOfRange error. */
@@ -88,6 +95,10 @@ value class BodyTemperature private constructor(val celsius: Double) : VitalSign
     override fun toString(): String = "$celsius °C"
 
     companion object {
+        /**
+         * Plausible body temperatures in °C. A value outside is rejected and never stored (ADR-0009).
+         * `TemperatureUnit.FAHRENHEIT_THRESHOLD` depends on this range.
+         */
         val RANGE_CELSIUS = 30.0..44.0
 
         /**
@@ -107,7 +118,10 @@ value class BodyTemperature private constructor(val celsius: Double) : VitalSign
             BodyTemperature(rounded)
         }
 
-        /** The range error reports the converted Celsius value: the domain has one unit, so its messages do too. */
+        /**
+         * The range error reports the converted Celsius value: the domain has one unit, so its messages do too.
+         * The conversion is the standard one: °C = (°F - 32) * 5 / 9.
+         */
         fun ofFahrenheit(fahrenheit: Double): Either<ValidationError, BodyTemperature> =
             ofCelsius((fahrenheit - 32) * 5 / 9)
     }

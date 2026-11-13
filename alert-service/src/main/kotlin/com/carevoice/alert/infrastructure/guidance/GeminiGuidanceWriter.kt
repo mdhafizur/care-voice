@@ -148,7 +148,14 @@ object GeminiApi {
     /** The key travels in this header, never as `?key=` in the URL (URLs end up in proxy and access logs). */
     const val API_KEY_HEADER = "x-goog-api-key"
     const val DEFAULT_BASE_URL = "https://generativelanguage.googleapis.com"
+
+    /**
+     * An alias that always points to Google's newest Flash model, so a new model needs no code change.
+     * Model names: https://ai.google.dev/gemini-api/docs/models
+     */
     const val DEFAULT_MODEL = "gemini-flash-latest"
+
+    /** Google's text embedding model, used by [GeminiEmbedder]. */
     const val DEFAULT_EMBEDDING_MODEL = "gemini-embedding-001"
 
     /** The lowest level Gemini 3.8 Flash accepts (`minimal` is rejected there). */

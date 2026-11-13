@@ -55,12 +55,21 @@ sealed class ApiException(message: String) : RuntimeException(message) {
     class Overloaded : ApiException("The service is busy. Retry after the time given in Retry-After.")
 }
 
+/** Start of the RFC 9457 `type` URI; the problem slug is added to it (docs/CONTRACTS.md, section 6). */
 private const val PROBLEM_BASE = "https://carevoice.dev/problems/"
 private const val UNEXPECTED_ERROR = "An unexpected error occurred."
+
+/**
+ * `Retry-After` of a plain 503, in seconds: a dependency is down or event processing is full (docs/CONTRACTS.md,
+ * sections 6 and 9).
+ */
 private const val RETRY_AFTER_SECONDS = "1"
 
 /** A request that ran out of time is retried a little later than a plain 503, so a slow dependency can recover. */
 private const val DEADLINE_RETRY_AFTER_SECONDS = "2"
+
+/** `Retry-After` of a 429, in seconds, when the rate limiter set none: the per-user limit refills every minute. */
+private const val RATE_LIMIT_RETRY_AFTER_SECONDS = "60"
 
 val ProblemContentType: ContentType = ContentType("application", "problem+json")
 
@@ -137,7 +146,7 @@ fun Application.installStatusPages() {
         status(HttpStatusCode.TooManyRequests) { call, status ->
             if (call.attributes.contains(ProblemWritten)) return@status
             if (call.response.headers[HttpHeaders.RetryAfter] == null) {
-                call.response.header(HttpHeaders.RetryAfter, "60")
+                call.response.header(HttpHeaders.RetryAfter, RATE_LIMIT_RETRY_AFTER_SECONDS)
             }
             // A rate-limit hit is WARN ("handled but suspicious"), other rejections INFO.
             log.event(
@@ -180,6 +189,7 @@ private suspend fun ApplicationCall.respondServiceError(cause: AlertServiceExcep
         is AlertServiceException.PreconditionRequired -> {
             rejected("precondition-required")
             respondProblem(
+                // 428 Precondition Required (RFC 6585, section 3): the update was sent without `If-Match`.
                 HttpStatusCode(428, "Precondition Required"),
                 "precondition-required",
                 "Precondition required",

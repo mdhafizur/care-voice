@@ -53,6 +53,7 @@ class GeminiEmbedder(
 
     init {
         require(apiKey.isNotBlank()) { "apiKey must not be blank" }
+        // The `outputDimensionality` values this adapter accepts: 128 up to the model's full vector size of 3072.
         require(dimensions in 128..3072) { "dimensions must be in 128..3072" }
     }
 
@@ -98,6 +99,7 @@ class GeminiEmbedder(
         }
     }.toString()
 
+    /** True for models that take the purpose as `taskType`: `gemini-embedding-001` and the older `text-embedding-*`. */
     private val usesTaskType: Boolean
         get() = apiModel.removePrefix("models/").let { it == "gemini-embedding-001" || it.startsWith("text-embedding") }
 
@@ -125,7 +127,7 @@ class GeminiEmbedder(
          */
         const val DEFAULT_MIN_SCORE = 0.5
 
-        /** Requests per `batchEmbedContents` call. */
+        /** The most texts this adapter sends in one `batchEmbedContents` call; bigger corpora go in several calls. */
         const val MAX_BATCH = 100
 
         /** `embeddings[i].values` in request order, each normalized to length 1. */

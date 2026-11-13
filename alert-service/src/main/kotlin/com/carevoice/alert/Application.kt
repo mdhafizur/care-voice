@@ -320,11 +320,27 @@ private suspend fun ingestProtocols(embedder: Embedder, repository: ProtocolChun
     }
 }
 
+/** Exit code when the configuration is invalid; the migrate and replay commands exit with 1 when they fail. */
 private const val EXIT_CONFIG_ERROR = 2
+
+/**
+ * `EX_USAGE` from the BSD sysexits convention: the command was called with wrong arguments.
+ * https://man.freebsd.org/cgi/man.cgi?query=sysexits
+ */
 private const val EXIT_USAGE = 64
 private const val REPLAY_COMMAND = "replay-dead-letters"
+
+/**
+ * How long the pod keeps serving with readiness DOWN before it drains. The shutdown budget in
+ * deploy/helm/carevoice/values.yaml (readiness DOWN for 5 s, consumer stop up to 10 s, drain 10 s) must fit in the
+ * pod's `terminationGracePeriodSeconds`.
+ */
 private val READINESS_PROPAGATION_DELAY = 5.seconds
+
+/** Longest wait for the RabbitMQ consumer to finish its in-flight messages at shutdown (same budget as above). */
 private val CONSUMER_STOP_TIMEOUT = 10.seconds
+
+/** Ktor's `gracePeriodMillis`: time for activity to cool down before the server stops; [DRAIN_TIMEOUT] caps it. */
 private val GRACE_PERIOD = 1.seconds
 
 /** In-flight HTTP requests get this long to finish (docs/CONTRACTS.md, section 6). */

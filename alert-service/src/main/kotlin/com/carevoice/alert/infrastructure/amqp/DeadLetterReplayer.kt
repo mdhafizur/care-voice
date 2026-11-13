@@ -44,12 +44,14 @@ class DeadLetterReplayer(private val connectionFactory: ConnectionFactory) {
             var replayed = 0
             while (replayed < budget) {
                 // Step 4: take one message and publish it again to the events exchange with the retry routing key.
+                // `false` = no automatic ack: the broker keeps the message until step 5 acks it.
                 val message = channel.basicGet(AmqpTopology.DEAD_LETTER_QUEUE, false) ?: break
                 val headers = message.props.headers.orEmpty()
                 val properties = message.props.builder().headers(replayHeaders(headers)).build()
                 channel.basicPublish(
                     AmqpTopology.EVENTS_EXCHANGE,
                     AmqpTopology.RETRY_ROUTING_KEY,
+                    // mandatory = false: the broker does not send the message back when no queue matches the key.
                     false,
                     properties,
                     message.body,
@@ -64,6 +66,7 @@ class DeadLetterReplayer(private val connectionFactory: ConnectionFactory) {
                     LogType.EXTERNAL_REQUEST,
                     "Dead-lettered event replayed",
                     "eventId" to message.props.messageId,
+                    // Only the first 200 characters of the reason.
                     "reason" to headers[ObservationEventConsumer.HEADER_DEAD_LETTER_REASON]?.toString()?.take(200),
                 )
             }
@@ -84,6 +87,7 @@ class DeadLetterReplayer(private val connectionFactory: ConnectionFactory) {
         /** How often an event was replayed from the dead-letter queue. */
         const val HEADER_REPLAYED = "x-carevoice-replayed"
 
+        /** How long to wait for the broker's publisher confirm of one copy before failing (5 s, in milliseconds). */
         private const val CONFIRM_TIMEOUT_MS = 5_000L
 
         /** Headers for the replayed copy: retry state and dead-letter details removed, replay count increased. */

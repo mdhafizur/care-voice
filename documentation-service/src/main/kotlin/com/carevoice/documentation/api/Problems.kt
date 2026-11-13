@@ -108,6 +108,7 @@ private fun ApplicationCall.logRejected(status: Int, reason: String, vararg fiel
     )
 }
 
+/** Longest part of the request path, in characters, that goes into a log line. */
 private const val MAX_LOGGED_PATH = 256
 
 /** The stable `reason` slug written to the log for each application error type. */
@@ -279,7 +280,10 @@ fun Application.installProblemDetails() {
     }
 }
 
+/** HTTP 428 Precondition Required (RFC 6585, section 3): an update was sent without an `If-Match` header. */
 val PRECONDITION_REQUIRED = HttpStatusCode(428, "Precondition Required")
+
+/** `WWW-Authenticate` value on a 401: the client must send a bearer token (RFC 6750, section 3). */
 const val BEARER_CHALLENGE = "Bearer realm=\"carevoice\""
 
 /** `Retry-After` in whole seconds, at least 1 (rounding down to 0 would invite an immediate retry storm). */

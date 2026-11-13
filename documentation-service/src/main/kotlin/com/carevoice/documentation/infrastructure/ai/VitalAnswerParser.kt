@@ -85,8 +85,12 @@ internal object VitalAnswerParser {
         if (primitive.isString) primitive.content.trim().toDoubleOrNull() else primitive.doubleOrNull
     }
 
+    /** Longest unit string kept (the prompt asks for `C`, `F` or null); a longer one is dropped. */
     private const val MAX_UNIT_LENGTH = 16
 
-    /** ```json ... ``` or ``` ... ```, the content in group 1. */
+    /**
+     * ```json ... ``` or ``` ... ```, the content in group 1. `[a-zA-Z]*` skips the optional language name after
+     * the opening fence; `[\s\S]*?` takes any characters, line breaks included, up to the first closing fence.
+     */
     private val FENCE = Regex("```[a-zA-Z]*\\s*([\\s\\S]*?)```")
 }

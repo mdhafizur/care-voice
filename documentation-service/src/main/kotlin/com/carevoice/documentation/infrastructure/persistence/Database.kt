@@ -75,6 +75,7 @@ class Database private constructor(
                         )
                             .apply {
                                 // Starting without a reachable replica is allowed: reads fall back to the primary.
+                                // -1: Hikari skips the connection attempt at startup and connects in the background.
                                 initializationFailTimeout = -1
                                 meterRegistry?.let { registry -> metricRegistry = registry }
                             },
@@ -107,12 +108,16 @@ class Database private constructor(
             username = user
             this.password = password
             maximumPoolSize = poolSize
+            // Keep 2 idle connections ready (fewer when the pool is smaller).
             minimumIdle = minOf(2, poolSize)
             isAutoCommit = true
             isReadOnly = readOnly
             // READ COMMITTED (PostgreSQL's default, stated explicitly): every statement sees committed data; the
             // correctness rules rely on unique constraints, version checks and SKIP LOCKED, not on isolation.
             transactionIsolation = "TRANSACTION_READ_COMMITTED"
+            // Times in milliseconds. connectionTimeout: wait at most 3 s for a free connection from the pool, then
+            // fail (SQLTransientConnectionException, which becomes a 503). validationTimeout: at most 1 s to check
+            // that a connection is alive. maxLifetime: replace every connection after 30 minutes.
             connectionTimeout = 3_000
             validationTimeout = 1_000
             maxLifetime = 30 * 60_000L

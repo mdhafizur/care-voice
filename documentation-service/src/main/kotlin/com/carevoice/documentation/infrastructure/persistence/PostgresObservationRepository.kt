@@ -247,6 +247,7 @@ class PostgresObservationRepository(private val dataSource: DataSource) : Observ
             "id, tenant_id, ward_id, resident_id, transcript_id, vital_type, systolic, diastolic, pulse_bpm, " +
                 "temperature_celsius, source, confidence, status, recorded_at, confirmed_by, confirmed_at, version"
         private const val SELECT_SQL = "SELECT $COLUMNS FROM observations"
+        // One `?` per column of `COLUMNS` (17), bound in the same order by insertParams.
         private const val INSERT_SQL =
             "INSERT INTO observations ($COLUMNS) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
 

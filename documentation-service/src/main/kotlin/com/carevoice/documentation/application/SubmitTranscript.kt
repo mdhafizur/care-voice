@@ -296,7 +296,11 @@ class SubmitTranscript(
             .increment()
     }
 
-    /** Signals "another request won the idempotency race" out of the transaction block, which rolls it back. */
+    /**
+     * Signals "another request won the idempotency race" out of the transaction block, which rolls it back.
+     * The arguments are (message, cause, enableSuppression, writableStackTrace): no message and no stack trace,
+     * which makes it cheap to create.
+     */
     private class IdempotencyRaceLost : RuntimeException(null, null, false, false)
 
     companion object {
@@ -313,6 +317,7 @@ class SubmitTranscript(
         fun requestHash(command: SubmitTranscriptCommand): String {
             val digest = MessageDigest.getInstance("SHA-256")
             digest.update(command.residentId.toByteArray(Charsets.UTF_8))
+            // A 0 byte separates the two parts, so resident "ab" + text "c" and resident "a" + text "bc" differ.
             digest.update(0)
             digest.update(command.transcript.toByteArray(Charsets.UTF_8))
             return HexFormat.of().formatHex(digest.digest())

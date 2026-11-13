@@ -42,6 +42,10 @@ class MigrationException(message: String) : RuntimeException(message)
  *
  * [migrate] applies pending migrations; [validate] (used when `MONGO_MIGRATE_ON_STARTUP=false`) only checks and fails
  * on anything pending, so in Kubernetes the pre-upgrade Job is the only writer of the schema.
+ *
+ * @property lockTtl how long the lock stays valid without renewal; the lock of a crashed pod frees itself after it.
+ * @property lockWait how long [migrate] waits for a lock held by another pod before it fails.
+ * @property pollInterval how often it tries again to take the lock while waiting.
  */
 class MongoMigrationRunner(
     private val database: MongoDatabase,
@@ -220,6 +224,7 @@ class MongoMigrationRunner(
         try {
             locks.updateOne(
                 Filters.and(Filters.eq("_id", LOCK_ID), Filters.eq(OWNER, owner)),
+                // An expiry at Instant.EPOCH (1970) means the lock counts as expired right away.
                 Updates.combine(Updates.set(LOCKED, false), Updates.set(EXPIRES_AT, Date.from(Instant.EPOCH))),
             )
         } catch (e: Exception) {
@@ -254,6 +259,11 @@ class MongoMigrationRunner(
         private const val LOCKED = "locked"
         private const val OWNER = "owner"
         private const val EXPIRES_AT = "expiresAt"
+
+        /**
+         * MongoDB error code 11000, DuplicateKey: a unique index already has this value.
+         * Official list: https://github.com/mongodb/mongo/blob/master/src/mongo/base/error_codes.yml
+         */
         private const val DUPLICATE_KEY = 11000
     }
 }

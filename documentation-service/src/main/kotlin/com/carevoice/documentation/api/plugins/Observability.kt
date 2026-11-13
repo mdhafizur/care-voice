@@ -60,6 +60,7 @@ fun Application.installCorrelationAndAccessLog() {
  * HTTP server metrics with server-side percentile histograms (docs/CONTRACTS.md, section 14): histograms aggregate
  * across pods (client-side percentiles cannot), and the SLO buckets 100 ms / 300 ms / 1 s make "share of requests
  * under 300 ms" an exact counter ratio. Plus JVM binders (memory, GC, threads, class loading, CPU, uptime).
+ * The percentile buckets span 5 ms to 10 s (minimumExpectedValue and maximumExpectedValue).
  */
 fun Application.installMetrics(registry: PrometheusMeterRegistry) {
     install(MicrometerMetrics) {

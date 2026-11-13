@@ -105,7 +105,7 @@ fun Application.installJwtAuthentication(config: JwtConfig, clock: Clock) {
                     LogType.REQUEST,
                     "Authentication failed",
                     "reason" to reason,
-                    "path" to call.request.path().take(256),
+                    "path" to call.request.path().take(MAX_LOGGED_PATH),
                 )
                 call.response.header(HttpHeaders.WWWAuthenticate, BEARER_CHALLENGE)
                 call.respondProblem(
@@ -129,6 +129,7 @@ fun jwtVerifier(config: JwtConfig, clock: Clock): JWTVerifier {
             .withClaimPresence(JwtClaims.TENANT)
             .withClaimPresence(JwtClaims.WARD)
             .withClaimPresence(JwtClaims.ROLES)
+            // Leeway is the clock difference allowed when checking `exp`, `nbf` and `iat`; 0 seconds means none.
             .acceptLeeway(0)
     return (verification as JWTVerifier.BaseVerification).build(clock)
 }
@@ -195,6 +196,8 @@ val RoleGuard =
 
 class UserRateLimitConfig {
     lateinit var limiter: DistributedRateLimiter
+
+    /** Requests per signed-in user per minute; 120 is the `RATE_LIMIT_PER_MINUTE` default. */
     var perMinute: Int = 120
 }
 
@@ -225,7 +228,11 @@ val UserRateLimit =
         }
     }
 
+/** Response header: how many requests the caller has left in the current one-minute window. */
 const val RATE_LIMIT_REMAINING = "X-RateLimit-Remaining"
+
+/** Longest part of the request path, in characters, that goes into a log line: the path is user input. */
+private const val MAX_LOGGED_PATH = 256
 
 /**
  * Security headers on every response (docs/CONTRACTS.md, section 11). `Cache-Control: no-store` unless a handler
@@ -234,7 +241,9 @@ const val RATE_LIMIT_REMAINING = "X-RateLimit-Remaining"
  */
 fun Application.installSecurityHeaders() {
     install(DefaultHeaders) {
+        // nosniff: a browser must use the Content-Type that was sent and never guess another one.
         header("X-Content-Type-Options", "nosniff")
+        // no-referrer: a browser that follows a link from a response sends no `Referer` header.
         header("Referrer-Policy", "no-referrer")
     }
     install(

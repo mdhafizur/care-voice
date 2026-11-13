@@ -215,6 +215,8 @@ class ProcessObservationEvent(
 
     companion object {
         val SUPPORTED_SCHEMA_VERSIONS: Set<Int> = setOf(ObservationRecordedEvent.SCHEMA_VERSION)
+
+        /** Longest id accepted (eventId, tenantId, wardId, residentId, observationId); a longer id is invalid. */
         const val MAX_ID_LENGTH = 64
 
         /**

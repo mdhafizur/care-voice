@@ -149,8 +149,12 @@ class GetAlertGuidance(
     }
 
     companion object {
+        /** Most steps a grounded answer may have (docs/CONTRACTS.md, section 9c). */
         const val MAX_STEPS = 8
+
+        /** Longest text of one step, in characters (docs/CONTRACTS.md, section 9c). */
         const val MAX_STEP_LENGTH = 400
+
         private val log = LoggerFactory.getLogger(GetAlertGuidance::class.java)
 
         /** Every step cites only retrieved sections, at least one each; bounded count and length. */
@@ -186,6 +190,7 @@ class ExtractiveGuidanceWriter : GuidanceWriter {
 
     /** `- item` lines, with indented continuation lines joined; the first sentence when a section has no bullets. */
     private fun bullets(text: String): List<String> {
+        // Both drop(1) below skip the first line: the "<title>. <section>." header ProtocolChunker puts on a chunk.
         val items = mutableListOf<StringBuilder>()
         for (line in text.lines().drop(1)) {
             when {

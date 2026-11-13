@@ -24,6 +24,13 @@ import kotlin.time.toJavaDuration
 /**
  * Circuit breaker tuning for the guidance providers. Smaller windows than documentation-service's (20 calls), because
  * guidance traffic is low (a nurse opening an alert): the breaker must be able to open after a handful of failures.
+ * The settings in detail: https://resilience4j.readme.io/docs/circuitbreaker
+ *
+ * @property failureRateThreshold percent of failed calls in the window at which the breaker opens.
+ * @property slidingWindowSize how many of the latest calls the failure rate is measured over.
+ * @property minimumNumberOfCalls calls needed before the failure rate is judged at all.
+ * @property waitDurationInOpenState how long the breaker stays open (failing at once) before test calls may pass.
+ * @property permittedCallsInHalfOpenState test calls allowed after that wait; their results decide if it closes again.
  */
 data class GuidanceBreakerSettings(
     val failureRateThreshold: Float = 50f,

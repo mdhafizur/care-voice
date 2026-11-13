@@ -59,13 +59,20 @@ class ClaudeVitalExtractor(
         const val MESSAGES_PATH = "/v1/messages"
         const val API_KEY_HEADER = "x-api-key"
         const val VERSION_HEADER = "anthropic-version"
+
+        /**
+         * Value of the required `anthropic-version` header: the version of the API format this request uses.
+         * https://docs.anthropic.com/en/api/versioning
+         */
         const val API_VERSION = "2023-06-01"
+
         const val CIRCUIT_BREAKER_NAME = "anthropic"
         const val DEFAULT_MODEL = "claude-haiku-5-5"
 
         const val FALLBACK_TOTAL_METRIC = HttpAiVitalExtractor.FALLBACK_TOTAL_METRIC
         const val REQUEST_SECONDS_METRIC = HttpAiVitalExtractor.REQUEST_SECONDS_METRIC
 
+        /** Upper limit for the answer, in tokens. The answer is a short JSON array (see [requestBody]). */
         private const val MAX_TOKENS = 512
 
         /** Claude follows the output format from the instructions alone. */

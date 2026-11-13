@@ -95,6 +95,7 @@ fun main(args: Array<String>) {
 
         else -> {
             System.err.println("Usage: documentation-service [migrate]")
+            // Exit code 2 means wrong usage; 0 and 1 are the results of `migrate` (see above).
             exitProcess(2)
         }
     }
@@ -133,6 +134,7 @@ private fun runService() {
     // readiness has flipped; our hook below runs the full ordered shutdown instead.
     System.setProperty("io.ktor.server.engine.ShutdownHook", "false")
     val system = ServiceSystem.create(config)
+    // host 0.0.0.0: listen on every network interface of the container, not only on localhost.
     val server =
         embeddedServer(Netty, port = config.httpPort, host = "0.0.0.0") {
             module(system.dependencies)
@@ -145,6 +147,8 @@ private fun runService() {
     Runtime.getRuntime().addShutdownHook(
         Thread({
             runBlocking {
+                // Ktor's stop(gracePeriod, timeout), both in ms: requests get up to DRAIN to finish, and the server
+                // is forced to stop at most 5 s after that.
                 system.shutdown { server.stop(DRAIN.inWholeMilliseconds, DRAIN.inWholeMilliseconds + 5_000) }
             }
             stopped.countDown()
@@ -214,7 +218,10 @@ class ServiceSystem private constructor(
     }
 
     companion object {
+        /** Wait after readiness turns 503, so the load balancer notices first (docs/CONTRACTS.md, section 6). */
         private val READINESS_PROPAGATION: Duration = 3.seconds
+
+        /** Longest wait for the outbox relay to finish its current batch; after it, shutdown goes on anyway. */
         private val RELAY_STOP_TIMEOUT: Duration = 15.seconds
 
         /** Builds every adapter and use case from [config]. [clock] is the time source for all of them. */

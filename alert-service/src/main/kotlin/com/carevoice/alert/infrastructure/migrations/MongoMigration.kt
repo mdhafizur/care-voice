@@ -45,6 +45,7 @@ object M001CreateAlertIndexes : MongoMigration {
     override val version = 1
     override val description = "Create alert indexes"
 
+    // Index names: `ux_` = unique index, `ix_` = normal index (`ttl_` in M002 = TTL index).
     private val indexes =
         listOf(
             IndexModel(
@@ -68,6 +69,8 @@ object M001CreateAlertIndexes : MongoMigration {
             ),
         )
 
+    // In this text 1 means ascending and -1 descending order, as in MongoDB index keys. Changing the text changes
+    // the checksum.
     override val definition: String =
         "alerts: unique {eventId:1, rule:1}; {tenantId:1, wardId:1, status:1, createdAt:-1, _id:-1}; " +
             "{tenantId:1, wardId:1, createdAt:-1, _id:-1}"
@@ -161,6 +164,10 @@ private suspend fun createCollectionIfMissing(database: MongoDatabase, name: Str
     }
 }
 
+/**
+ * MongoDB error code 48, NamespaceExists: a collection with this name already exists.
+ * Official list: https://github.com/mongodb/mongo/blob/master/src/mongo/base/error_codes.yml
+ */
 private const val NAMESPACE_EXISTS = 48
 
 /** SHA-256 hash of [text] as a lowercase hex string; used for migration checksums. */

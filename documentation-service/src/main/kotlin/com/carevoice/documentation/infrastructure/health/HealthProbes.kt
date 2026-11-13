@@ -22,6 +22,7 @@ class PostgresHealthProbe(
      */
     override suspend fun check(): HealthStatus = withTimeoutOrNull(timeout) {
         withContext(Dispatchers.IO) {
+            // JDBC isValid takes whole seconds, and 0 means "no time limit", so at least 1 s is passed.
             dataSource.connection.use { it.isValid(timeout.inWholeSeconds.toInt().coerceAtLeast(1)) }
         }
     }.let {

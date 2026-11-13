@@ -81,6 +81,7 @@ private fun <V : VitalSign> Either<ValidationError, V>.toOutcome(
 /** "blood pressure 120/75", "bp: 135/85", or a bare "120/75" at lower confidence. */
 class BloodPressureExtractor : VitalExtractor {
     // The keyword group is optional so a bare pair is still found, just with lower confidence.
+    // gap(20): at most 20 characters between the keyword and the numbers (guard 2).
     private val pattern =
         Regex("""(${word(BLOOD_PRESSURE_KEYWORDS)}${gap(20)})?$NUMBER_START(\d{2,3})/(\d{2,3})$NUMBER_END""")
 
@@ -100,6 +101,7 @@ class BloodPressureExtractor : VitalExtractor {
 
 /** "pulse 80", "heart rate of 72 bpm", "hr 110". */
 class PulseExtractor : VitalExtractor {
+    // gap(15): at most 15 characters between the keyword and the number (guard 2). The number has 2 or 3 digits.
     private val pattern = Regex("""${word(PULSE_KEYWORDS)}${gap(15)}(\d{2,3})$NUMBER_END""")
 
     /** Finds every pulse keyword followed by a two- or three-digit number, always at explicit confidence. */
@@ -121,6 +123,8 @@ class PulseExtractor : VitalExtractor {
  * "101 degrees" is Fahrenheit.
  */
 class TemperatureExtractor : VitalExtractor {
+    // gap(15): at most 15 characters between the keyword and the value (guard 2). The value has 2 or 3 digits
+    // and up to 2 decimals, e.g. "37.25".
     private val pattern =
         Regex(
             """${word(TEMPERATURE_KEYWORDS)}${gap(15)}(\d{2,3}(?:\.\d{1,2})?)$NUMBER_END""" +

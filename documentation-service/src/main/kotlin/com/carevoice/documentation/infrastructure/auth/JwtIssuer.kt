@@ -86,7 +86,15 @@ class JwtIssuer(
 
     companion object {
         const val SERVICE_SUBJECT = "documentation-service"
+
+        /**
+         * The `tenant` and `ward` claim of a SERVICE token. The token belongs to no single tenant or ward, but
+         * alert-service rejects a token without these claims, so they carry this placeholder. alert-service's event
+         * endpoint does not read them.
+         */
         private const val SERVICE_SCOPE = "*"
+
+        /** Lifetime of a SERVICE token: 5 minutes (docs/CONTRACTS.md, section 5). */
         val SERVICE_TOKEN_TTL: Duration = 5.minutes
     }
 }

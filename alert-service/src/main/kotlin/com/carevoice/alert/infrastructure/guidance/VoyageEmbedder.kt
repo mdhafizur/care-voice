@@ -41,6 +41,7 @@ class VoyageEmbedder(
     private val timeout: Duration = 10.seconds,
     baseUrl: String = "https://api.voyageai.com",
 ) : Embedder {
+    /** Voyage's embeddings endpoint (`POST /v1/embeddings`). */
     private val endpoint = baseUrl.trimEnd('/') + "/v1/embeddings"
 
     init {
@@ -93,6 +94,7 @@ class VoyageEmbedder(
     override fun toString(): String = "VoyageEmbedder(model=$model, apiKey=***)"
 
     companion object {
+        /** Voyage's smaller, cheaper and faster general-purpose model. See https://docs.voyageai.com/docs/embeddings */
         const val DEFAULT_MODEL = "voyage-3.5-lite"
 
         /** Semantic scores are higher overall than lexical ones; tune with the evaluation set when changing models. */

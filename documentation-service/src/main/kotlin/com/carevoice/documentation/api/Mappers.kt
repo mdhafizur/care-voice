@@ -143,5 +143,8 @@ private fun instantOrError(field: String, raw: String?, errors: MutableList<Fiel
     }
 }
 
+/** Most resident ids one filter may list; the same limit as `maxItems: 100` in the OpenAPI spec. */
 private const val MAX_FILTER_VALUES = 100
+
+/** 1 to 64 letters, digits or '-': the same rule as the domain's ResidentId and the OpenAPI `ResidentId` pattern. */
 private val RESIDENT_ID = Regex("^[A-Za-z0-9-]{1,64}$")

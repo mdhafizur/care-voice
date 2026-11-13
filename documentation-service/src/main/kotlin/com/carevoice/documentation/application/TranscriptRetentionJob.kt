@@ -25,6 +25,10 @@ import kotlin.time.toJavaDuration
  * Multi-instance: every pod runs the schedule, but a run only does work while holding the transaction-scoped
  * advisory lock `transcript-retention`; the other pods skip that run (docs/CONTRACTS.md, section 9b). Batches keep
  * each transaction short.
+ *
+ * @param interval time between two runs.
+ * @param batchSize most texts one statement erases; a run repeats it until a batch comes back short or
+ *   [MAX_PER_RUN] is reached.
  */
 class TranscriptRetentionJob(
     private val transcripts: TranscriptRepository,

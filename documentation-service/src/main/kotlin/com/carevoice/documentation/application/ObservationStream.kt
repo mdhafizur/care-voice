@@ -120,7 +120,10 @@ class ObservationStream(
     }
 
     companion object {
+        /** Events the shared flow holds for slow subscribers on this instance; when full, the oldest is dropped. */
         const val DEFAULT_BUFFER = 1_024
+
+        /** Events held for one client; when full, the oldest is dropped (the client catches up with Last-Event-ID). */
         const val PER_CLIENT_BUFFER = 256
 
         /** Upper bound of a replay; a client that was away longer reloads the list instead. */

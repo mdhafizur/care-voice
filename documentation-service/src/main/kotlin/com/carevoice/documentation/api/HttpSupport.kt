@@ -51,14 +51,19 @@ suspend fun <T> ApplicationCall.receiveJson(serializer: KSerializer<T>, maxBytes
     return ApiJson.decodeFromString(serializer, text)
 }
 
+/** The body is read in chunks of 8 KiB. The size only changes how many reads are needed, not the body limit. */
 private const val BUFFER_SIZE = 8 * 1024
 
-/** Weak ETag over the exact response bytes: equal bodies, equal tags, on every replica. */
+/**
+ * Weak ETag over the exact response bytes: equal bodies, equal tags, on every replica.
+ * The `W/` prefix marks a weak tag (RFC 9110, section 8.8.3).
+ */
 fun weakEtagOf(body: String): String {
     val digest = MessageDigest.getInstance("SHA-256").digest(body.toByteArray(Charsets.UTF_8))
     return "W/\"" + HexFormat.of().formatHex(digest, 0, ETAG_BYTES) + "\""
 }
 
+/** The tag uses the first 16 of the 32 SHA-256 bytes (32 hex characters), which keeps the header short. */
 private const val ETAG_BYTES = 16
 
 /** Strong ETag of a versioned resource: the optimistic-locking version itself. */

@@ -9,6 +9,11 @@ import com.carevoice.domain.model.ObservationStatus
  * missing one. So anything AI-extracted or uncertain must be confirmed by a nurse.
  */
 object ReviewPolicy {
+    /**
+     * Rule results with at least this confidence are stored as CONFIRMED; lower ones need a nurse's review.
+     * The value 0.8 is the one set in ADR-0009 (docs/adr/0009-rules-first-ai-fallback.md). With the levels in
+     * `RuleConfidence`, only explicit results (0.95) and an assumed Celsius unit (0.9) reach it.
+     */
     const val CONFIDENCE_THRESHOLD = 0.8
 
     /** AI results always need review; rule results need review only below [CONFIDENCE_THRESHOLD]. */

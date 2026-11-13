@@ -210,6 +210,7 @@ private class ConfigLoader(private val env: Map<String, String>) {
         val demoPassword = if (demoEnabled) demoPassword() else optional("DEMO_PASSWORD")
 
         // Build the config. Settings that need no check across values are read right here.
+        // The defaults and allowed ranges below are the ones in docs/CONTRACTS.md, section 4; keep both in sync.
         val config =
             AppConfig(
                 httpPort = int("HTTP_PORT", default = 8080, range = 1..65_535),
@@ -220,6 +221,7 @@ private class ConfigLoader(private val env: Map<String, String>) {
                     secret = jwtSecret(),
                     issuer = optional("JWT_ISSUER") ?: "carevoice-auth",
                     audience = optional("JWT_AUDIENCE") ?: "carevoice",
+                    // 900 s = 15 minutes; allowed: 1 minute to 24 hours.
                     accessTokenTtl = int("JWT_TTL_SECONDS", default = 900, range = 60..86_400).seconds,
                 ),
                 encryption = encryption(),
@@ -417,10 +419,22 @@ private class ConfigLoader(private val env: Map<String, String>) {
     }
 
     companion object {
+        /**
+         * 32 bytes = 256 bits. HS256 signs with HMAC-SHA-256, and its key must be at least as long as the hash
+         * output (RFC 7518, section 3.2).
+         */
         const val MIN_JWT_SECRET_BYTES = 32
+
+        /** AES-256 uses a key of exactly 256 bits = 32 bytes. */
         const val AES_256_KEY_BYTES = 32
+
+        /** Shortest accepted `DEMO_PASSWORD` (docs/CONTRACTS.md, section 4). */
         const val MIN_DEMO_PASSWORD_LENGTH = 8
+
+        /** Allowed `GEMINI_THINKING_LEVEL` values besides `none` (docs/CONTRACTS.md, section 4). */
         val GEMINI_THINKING_LEVELS = listOf("minimal", "low", "medium", "high")
+
+        /** Key id: 1 to 16 letters, digits, '_' or '-'. It is the prefix of every ciphertext (docs/CONTRACTS.md). */
         val KEY_ID = Regex("[A-Za-z0-9_-]{1,16}")
     }
 }

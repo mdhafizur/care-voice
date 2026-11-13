@@ -34,6 +34,7 @@ class IngestProtocols(
         val documents = source.documents()
         val chunks = documents.flatMap { ProtocolChunker.chunk(it.id, it.markdown) }
         // Step 2: the version is a SHA-256 hash of the model name and all chunks. Compare it with the stored one.
+        // U+0001 (a control character that never occurs in a chunk id) separates each id from its text.
         val version = versionOf(embedder.model, chunks.map { it.id + "\u0001" + it.text })
         val stored = repository.corpusVersion(embedder.model)
         log.event(
@@ -43,6 +44,7 @@ class IngestProtocols(
             "documents" to documents.size,
             "chunks" to chunks.size,
             "embeddingModel" to embedder.model,
+            // Only the first 12 hex characters of each hash are logged, to keep the line short.
             "version" to version.take(12),
             "storedVersion" to stored?.take(12),
             "reembed" to (stored != version),
@@ -73,6 +75,7 @@ class IngestProtocols(
                 digest.update(0.toByte())
                 digest.update(it.toByteArray())
             }
+            // "%02x" writes each byte as exactly two lowercase hex digits (e.g. 05, a3).
             return digest.digest().joinToString("") { "%02x".format(it) }
         }
     }

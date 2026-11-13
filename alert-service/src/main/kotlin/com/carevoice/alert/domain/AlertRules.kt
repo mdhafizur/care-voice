@@ -147,7 +147,7 @@ class HypothermiaRule : ThresholdRule(AlertRuleType.HYPOTHERMIA, Severity.CRITIC
         }
 }
 
-/** Locale-independent, so a German server never writes "39,8 °C". */
+/** One decimal place, locale-independent, so a German server never writes "39,8 °C". */
 private fun celsius(value: Double): String = String.format(Locale.ROOT, "%.1f", value)
 
 /**
