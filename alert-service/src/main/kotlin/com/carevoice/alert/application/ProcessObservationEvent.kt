@@ -138,6 +138,7 @@ class ProcessObservationEvent(
         }
         // Step 2: check the ids. All problems go into one list, so the error names every bad field at once.
         val violations = mutableListOf<FieldViolation>()
+
         // Records a violation when an id is blank or longer than MAX_ID_LENGTH.
         fun id(field: String, value: String) {
             if (value.isBlank()) {
