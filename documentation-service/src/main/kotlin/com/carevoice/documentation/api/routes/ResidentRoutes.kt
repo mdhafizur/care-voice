@@ -37,14 +37,21 @@ fun Route.residentRoutes(deps: Dependencies) {
     // Submit a note. A retry with the same idempotency key answers 200 with a "replayed" header;
     // a new note answers 201.
     post("/v1/residents/{residentId}/transcripts") {
+        // Step 1: who is calling. The JWT plugin already turned the Bearer token into a Caller.
         val caller = call.caller()
+        // Step 2: the Idempotency-Key header must be a UUID; missing or malformed gives a 400.
         val key = idempotencyKey(call.request.header(IDEMPOTENCY_KEY_HEADER))
+        // Step 3: read the JSON body: wrong Content-Type 415, too big 413, empty 400.
         val body = call.receiveJson(TranscriptRequest.serializer(), deps.http.maxBodyBytes)
+        // Step 4: run the use case. Its errors (404, 409, 422, 503) go up to the error plugin in Problems.kt,
+        // so this route needs no try/catch.
         val outcome =
             deps.submitTranscript.execute(
                 caller,
                 SubmitTranscriptCommand(call.parameters["residentId"].orEmpty(), key, body.transcript),
             )
+        // Step 5: answer. Location points to the saved transcript. A new note is 201 Created; a retry with
+        // the same key is 200 OK plus Idempotent-Replayed: true, because nothing new was saved.
         val response = outcome.result.toResponse()
         call.response.header(HttpHeaders.Location, "/v1/transcripts/${response.transcriptId}")
         if (outcome.replayed) {
@@ -57,8 +64,12 @@ fun Route.residentRoutes(deps: Dependencies) {
 
     // A resident's observations, one page at a time.
     get("/v1/residents/{residentId}/observations") {
+        // Step 1: read the page size and the cursor (where the previous page ended); bad values give a 400.
         val page = pageRequestOf(call.request.queryParameters["limit"], call.request.queryParameters["cursor"])
+        // Step 2: run the use case; it checks that the caller may see this resident.
         val result = deps.listResidentObservations.execute(call.caller(), call.parameters["residentId"].orEmpty(), page)
+        // Step 3: paging headers (e.g. the link to the next page), then the JSON body. The answer is
+        // conditional: if the client's If-None-Match ETag still matches, it gets 304 without a body.
         call.paginationHeaders(result)
         call.respondJsonConditional(
             ObservationListResponse.serializer(),

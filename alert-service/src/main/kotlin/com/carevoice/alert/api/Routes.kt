@@ -136,7 +136,9 @@ private fun Route.alertRoutes(api: AlertApi) {
 
     // Advisory protocol guidance (RAG, ADR-0023). Not cached with an ETag: generated text may differ between calls.
     get("/{alertId}/guidance") {
+        // Step 1: load the alert in the caller's scope and generate guidance from the care protocols.
         val guidance = api.getAlertGuidance.execute(call.caller.scope, call.alertId())
+        // Step 2: answer as JSON, without an ETag.
         call.respondText(
             ApiJson.encodeToString(AlertGuidanceDto.serializer(), AlertDtoMapper.toDto(guidance)),
             ContentType.Application.Json,
@@ -145,6 +147,8 @@ private fun Route.alertRoutes(api: AlertApi) {
 
     // Acknowledge an alert. `If-Match` must name the version the client saw.
     patch("/{alertId}/acknowledge") {
+        // Step 1: run the use case with the caller, the alert id and the version from If-Match (optimistic
+        // locking: it only goes through if nobody changed the alert since the client read it).
         val alert =
             api.acknowledgeAlert.execute(
                 scope = call.caller.scope,
@@ -152,6 +156,7 @@ private fun Route.alertRoutes(api: AlertApi) {
                 precondition = parseIfMatch(call.request.header(HttpHeaders.IfMatch)),
                 acknowledgedBy = call.caller.username,
             )
+        // Step 2: answer with the new version as ETag, marked not cacheable because the alert just changed.
         val json = ApiJson.encodeToString(AlertDto.serializer(), AlertDtoMapper.toDto(alert))
         call.respondJsonWithETag(json, versionETag(alert.version), cacheable = false)
     }
@@ -186,9 +191,12 @@ private fun Route.operationsRoutes(api: AlertApi) {
     }
     // Readiness: can this pod take traffic now? Not ready gives 503 and a `Retry-After`.
     get("/readyz") {
+        // Step 1: run every health check (MongoDB, RabbitMQ, ...).
         val report = api.readiness.check()
+        // Step 2: 200 when ready, 503 when not; a 503 also says when to ask again.
         val status = if (report.ready) HttpStatusCode.OK else HttpStatusCode.ServiceUnavailable
         if (!report.ready) call.response.header(HttpHeaders.RetryAfter, "5")
+        // Step 3: one status per dependency in the body.
         call.respondText(
             ApiJson.encodeToString(HealthDto.serializer(), AlertDtoMapper.toDto(report)),
             ContentType.Application.Json,
@@ -200,6 +208,7 @@ private fun Route.operationsRoutes(api: AlertApi) {
     }
     // API description (OpenAPI) and the Swagger UI page that shows it.
     get("/openapi.yaml") {
+        // Read the spec file packed into the jar; a missing file is a build mistake, so fail loudly.
         val spec =
             AlertApi::class.java.classLoader
                 .getResource(AlertApi.OPENAPI_RESOURCE)

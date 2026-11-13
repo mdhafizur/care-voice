@@ -44,12 +44,16 @@ fun Route.observationRoutes(deps: Dependencies) {
     post("/v1/observations/search") { queryObservations(deps) }
 
     patch("/v1/observations/{observationId}/confirm") {
+        // Step 1: run the use case with the caller and the version from If-Match (optimistic locking: the update
+        // only goes through if nobody changed the observation since the client read it). A missing If-Match
+        // gives 428, a version that no longer matches gives 412; the error plugin turns them into answers.
         val updated =
             deps.confirmObservation.execute(
                 call.caller(),
                 call.parameters["observationId"].orEmpty(),
                 call.ifMatchVersion(),
             )
+        // Step 2: answer with the new version as ETag, so the client can send it in its next If-Match.
         call.response.header(HttpHeaders.ETag, versionEtag(updated.version))
         call.respondJson(ObservationDto.serializer(), updated.toDto())
     }
@@ -57,12 +61,15 @@ fun Route.observationRoutes(deps: Dependencies) {
 
 /** Shared handler for QUERY and POST search: reads the filter body and answers one page, with an ETag. */
 private suspend fun RoutingContext.queryObservations(deps: Dependencies) {
+    // Step 1: who is calling, then read the filter from the JSON body (415, 413 or 400 when it is wrong).
     val caller = call.caller()
     val request = call.receiveJson(ObservationFilterRequest.serializer(), deps.http.maxBodyBytes)
+    // Step 2: turn the body into a filter and a page request, then run the search.
     val (filter, page) = request.toQuery()
     val result = deps.queryObservations.execute(caller, filter, page)
     // The cursor travels in the body (nextCursor), so there is no Link header; the total is still useful.
     call.response.header(TOTAL_COUNT_HEADER, result.totalCount.toString())
+    // Step 3: answer with an ETag; a client that still has this page gets 304 without a body.
     call.respondJsonConditional(
         ObservationListResponse.serializer(),
         ObservationListResponse(result.items.map { it.toDto() }, result.nextCursor),

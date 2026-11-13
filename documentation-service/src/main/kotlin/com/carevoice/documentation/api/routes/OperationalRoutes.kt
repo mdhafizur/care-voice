@@ -22,10 +22,13 @@ fun Route.operationalRoutes(deps: Dependencies) {
     // 503 while a critical dependency is down OR while shutting down (readiness flips first on SIGTERM). Redis and
     // RabbitMQ only show up as DEGRADED in the body: the service still works without them.
     get("/readyz") {
+        // Step 1: run every health check (Postgres, the replica, Redis, RabbitMQ).
         val report = deps.readiness.check()
+        // Step 2: one status per dependency for the body, e.g. "database": "UP".
         val body = HealthResponse(report.overall.name, report.checks.associate { it.name to it.status.name })
         // Retry-After: 5 asks the caller to check again in 5 seconds.
         if (!report.ready) call.response.header(HttpHeaders.RetryAfter, "5")
+        // Step 3: 200 when ready, 503 when not, so the load balancer stops sending traffic here.
         call.respondJson(
             HealthResponse.serializer(),
             body,
