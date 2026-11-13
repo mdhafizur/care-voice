@@ -49,6 +49,7 @@ internal object ProcessedEventFields {
  * dates (required by the TTL index and by range queries).
  */
 internal object AlertDocumentMapper {
+    /** Enums are stored by name and times as BSON dates; the vital is a nested document with a `type` field. */
     fun toDocument(alert: Alert): Document = Document()
         .append(AlertFields.ID, alert.id)
         .append(AlertFields.TENANT_ID, alert.tenantId)
@@ -67,6 +68,7 @@ internal object AlertDocumentMapper {
         .append(AlertFields.ACKNOWLEDGED_AT, alert.acknowledgedAt?.let { Date.from(it) })
         .append(AlertFields.VERSION, alert.version)
 
+    /** Reads a stored alert back. Unknown enum names or missing required fields throw. */
     fun fromDocument(doc: Document): Alert = Alert(
         id = doc.getString(AlertFields.ID),
         tenantId = doc.getString(AlertFields.TENANT_ID),
@@ -86,6 +88,7 @@ internal object AlertDocumentMapper {
         version = (doc.get(AlertFields.VERSION) as Number).toLong(),
     )
 
+    /** Stores the vital as a nested document; `type` says which kind of vital it is. */
     fun vitalToDocument(vital: Vital): Document = when (vital) {
         is Vital.BloodPressure ->
             Document("type", "BLOOD_PRESSURE")
@@ -97,6 +100,7 @@ internal object AlertDocumentMapper {
         is Vital.BodyTemperature -> Document("type", "BODY_TEMPERATURE").append("celsius", vital.celsius)
     }
 
+    /** Reads the nested vital by its `type` field; an unknown type throws. */
     fun vitalFromDocument(doc: Document): Vital = when (val type = doc.getString("type")) {
         "BLOOD_PRESSURE" ->
             Vital.BloodPressure((doc.get("systolic") as Number).toInt(), (doc.get("diastolic") as Number).toInt())
@@ -110,6 +114,7 @@ internal object AlertDocumentMapper {
 }
 
 internal object ProcessedEventDocumentMapper {
+    /** Stores the processed event with `processedAt` as a BSON date, which the TTL index needs. */
     fun toDocument(event: ProcessedEvent): Document = Document()
         .append(ProcessedEventFields.EVENT_ID, event.eventId)
         .append(ProcessedEventFields.TENANT_ID, event.tenantId)
@@ -119,6 +124,7 @@ internal object ProcessedEventDocumentMapper {
         .append(ProcessedEventFields.PROCESSED_AT, Date.from(event.processedAt))
         .append(ProcessedEventFields.COMPLETED, event.completed)
 
+    /** Reads a processed event back. A record without `completed` counts as completed. */
     fun fromDocument(doc: Document): ProcessedEvent = ProcessedEvent(
         eventId = doc.getString(ProcessedEventFields.EVENT_ID),
         tenantId = doc.getString(ProcessedEventFields.TENANT_ID),
@@ -130,4 +136,5 @@ internal object ProcessedEventDocumentMapper {
     )
 }
 
+/** Converts to a BSON date (java.util.Date), the type MongoDB uses for dates and range queries. */
 internal fun Instant.toBsonDate(): Date = Date.from(this)

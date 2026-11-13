@@ -27,6 +27,7 @@ class MongoProcessedEventRepository(database: MongoDatabase) : ProcessedEventRep
 
     private val collection = database.getCollection(ProcessedEventFields.COLLECTION, Document::class.java)
 
+    /** Inserts the record; returns false when the unique eventId index says the event was already claimed. */
     override suspend fun tryInsert(event: ProcessedEvent): Boolean = MongoErrors.translate {
         try {
             collection.insertOne(ProcessedEventDocumentMapper.toDocument(event))
@@ -46,6 +47,7 @@ class MongoProcessedEventRepository(database: MongoDatabase) : ProcessedEventRep
         }
     }
 
+    /** Looks the record up by eventId; null when there is none (or the TTL index already deleted it). */
     override suspend fun find(eventId: String): ProcessedEvent? = MongoErrors.translate {
         collection
             .find(Filters.eq(ProcessedEventFields.EVENT_ID, eventId))
@@ -54,6 +56,7 @@ class MongoProcessedEventRepository(database: MongoDatabase) : ProcessedEventRep
             .firstOrNull()
     }
 
+    /** Sets `completed` to true; does nothing when no record has this eventId. */
     override suspend fun markCompleted(eventId: String) {
         MongoErrors.translate {
             collection.updateOne(

@@ -22,6 +22,7 @@ object TranscriptNormalizer {
     private val spacedSlash = Regex("""(?<=\d)\s*/\s*(?=\d)""")
     private val whitespace = Regex("""\s+""")
 
+    /** Lowercases the text, writes spoken "over"/"slash" as "/" and "point" as ".", and squeezes spaces to one. */
     fun normalize(raw: String): String = raw
         // Kotlin's lowercase() uses Locale.ROOT, so a server with a Turkish default locale still turns
         // "CELSIUS" into "celsius" (and not into "celsıus" with a dotless i that no pattern would match).

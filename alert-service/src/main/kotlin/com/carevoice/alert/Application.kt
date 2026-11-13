@@ -183,6 +183,7 @@ private fun replayDeadLetters(config: AppConfig, limit: Int): Int = try {
     1
 }
 
+/** Runs the Mongo migrations (scripted schema changes) once and returns the exit code: 0 on success, 1 on failure. */
 private fun runMigrations(config: AppConfig): Int {
     val registry = PrometheusMeterRegistry(PrometheusConfig.DEFAULT)
     val client = MongoClientFactory.create(config.mongo, registry)
@@ -198,6 +199,11 @@ private fun runMigrations(config: AppConfig): Int {
     }
 }
 
+/**
+ * Starts the HTTP server and the RabbitMQ event consumer, and blocks until the server stops.
+ * Before it takes traffic, it applies or checks the Mongo migrations and loads the protocol knowledge base.
+ * A shutdown hook stops the server, then the consumer, the guidance HTTP client and the Mongo client.
+ */
 private fun serve(config: AppConfig) {
     log.info("Starting alert-service with {}", config)
     val registry = PrometheusMeterRegistry(PrometheusConfig.DEFAULT)

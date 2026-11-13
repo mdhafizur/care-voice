@@ -25,6 +25,10 @@ class DeadLetterReplayer(private val connectionFactory: ConnectionFactory) {
 
     data class Result(val replayed: Int, val remaining: Int)
 
+    /**
+     * Moves up to [limit] messages from the dead-letter queue back to the main queue.
+     * Returns how many were moved and how many are still in the dead-letter queue.
+     */
     fun replay(limit: Int = Int.MAX_VALUE): Result {
         require(limit >= 1) { "limit must be >= 1 but was $limit" }
         connectionFactory.newConnection("alert-service-dlq-replay").use { connection ->

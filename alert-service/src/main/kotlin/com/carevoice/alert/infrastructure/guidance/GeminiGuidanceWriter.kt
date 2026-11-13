@@ -46,6 +46,7 @@ data class GeminiSettings(
         require(model.isNotBlank()) { "model must not be blank" }
     }
 
+    /** Hides the API key, so the settings can be logged safely. */
     override fun toString(): String =
         "GeminiSettings(apiKey=***, model=$model, timeout=$timeout, baseUrl=$baseUrl, thinkingLevel=$thinkingLevel)"
 }
@@ -67,6 +68,10 @@ class GeminiGuidanceWriter(private val settings: GeminiSettings, private val htt
 
     private val endpoint = GeminiApi.url(settings.baseUrl, settings.model, "generateContent")
 
+    /**
+     * Calls Gemini `generateContent` and turns the JSON answer into steps.
+     * An empty step list means the model declined and gives null; a non-2xx status or no answer text throws.
+     */
     override suspend fun write(situation: String, sources: List<ScoredChunk>): List<GuidanceStep>? {
         val response =
             httpClient.post(endpoint) {
@@ -81,6 +86,10 @@ class GeminiGuidanceWriter(private val settings: GeminiSettings, private val htt
         return GuidancePrompt.parse(text)?.takeIf { it.isNotEmpty() }
     }
 
+    /**
+     * JSON body: system prompt, user prompt, and a response schema that only allows the ids of [sources] as
+     * citations. The thinking setting is sent only when one is configured.
+     */
     fun requestBody(situation: String, sources: List<ScoredChunk>): String = buildJsonObject {
         putJsonObject("systemInstruction") {
             putJsonArray("parts") { addJsonObject { put("text", GuidancePrompt.GEMINI_SYSTEM) } }

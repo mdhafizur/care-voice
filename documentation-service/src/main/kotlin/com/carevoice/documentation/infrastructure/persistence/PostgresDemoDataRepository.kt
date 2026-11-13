@@ -11,6 +11,10 @@ import javax.sql.DataSource
  */
 class PostgresDemoDataRepository(private val dataSource: DataSource, private val encryptor: FieldEncryptor) :
     DemoDataRepository {
+    /**
+     * Inserts the tenant, wards, residents (names encrypted) and users, skipping rows that already exist.
+     * Returns how many rows were really inserted.
+     */
     override suspend fun insertIfAbsent(dataset: DemoDataset): Int = withConnection(dataSource) { connection ->
         var inserted =
             connection.update(

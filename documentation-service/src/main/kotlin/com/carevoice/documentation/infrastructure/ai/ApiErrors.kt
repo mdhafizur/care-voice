@@ -16,6 +16,7 @@ internal object ApiErrors {
     private val json: Json = Json.Default
     private val CODE = Regex("^[A-Za-z0-9_.]{1,64}$")
 
+    /** Returns the error code from an error response body, or null when there is none or it looks unsafe to log. */
     fun code(body: String): String? = runCatching {
         val error = json.parseToJsonElement(body).jsonObject["error"] as? JsonObject ?: return null
         val code =

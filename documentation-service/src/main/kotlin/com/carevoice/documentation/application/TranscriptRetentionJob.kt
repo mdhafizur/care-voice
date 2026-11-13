@@ -37,6 +37,7 @@ class TranscriptRetentionJob(
     private val log = LoggerFactory.getLogger(TranscriptRetentionJob::class.java)
     private var job: Job? = null
 
+    /** Launches the loop: one [runOnce] now, then one every [interval]. A failed run is logged and the loop goes on. */
     fun start(scope: CoroutineScope): Job = scope
         .launch(CoroutineName(JOB_NAME) + MDCContext(mapOf("job" to JOB_NAME))) {
             while (isActive) {
@@ -51,6 +52,7 @@ class TranscriptRetentionJob(
             }
         }.also { job = it }
 
+    /** Cancels the loop and waits until it has stopped. Does nothing when [start] was never called. */
     suspend fun stop() {
         job?.cancelAndJoin()
     }

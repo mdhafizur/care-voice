@@ -36,6 +36,7 @@ class JwtIssuer(
     private val algorithm: Algorithm = Algorithm.HMAC256(config.secret)
     private val log = LoggerFactory.getLogger(JwtIssuer::class.java)
 
+    /** Issues a signed access token for the user's own tenant, ward and role. */
     override fun issue(user: UserAccount): IssuedToken = IssuedToken(
         accessToken = sign(
             user.username,
@@ -51,6 +52,7 @@ class JwtIssuer(
     fun issueServiceToken(ttl: Duration = SERVICE_TOKEN_TTL): String =
         sign(SERVICE_SUBJECT, SERVICE_SCOPE, SERVICE_SCOPE, listOf(Role.SERVICE.name), ttl)
 
+    /** Builds and signs an HS256 JWT with all claims, and logs its id (jti), never the token itself. */
     private fun sign(subject: String, tenant: String, ward: String, roles: List<String>, ttl: Duration): String {
         val now = clock.instant()
         val tokenId = newTokenId().toString()
@@ -101,6 +103,7 @@ class ServiceTokenProvider(
     private var cached: String? = null
     private var refreshAt: Instant = Instant.MIN
 
+    /** Returns the cached service token, or issues a new one when its refresh time has come. */
     suspend fun token(): String = mutex.withLock {
         val now = clock.instant()
         val current = cached

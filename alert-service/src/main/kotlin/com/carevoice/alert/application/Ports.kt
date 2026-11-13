@@ -18,6 +18,7 @@ interface AlertRepository {
      */
     suspend fun insertAll(alerts: List<Alert>): List<Alert>
 
+    /** Returns the alert only when it belongs to [scope]; null when it is missing or in another ward. */
     suspend fun findById(scope: WardScope, alertId: String): Alert?
 
     /**
@@ -28,6 +29,7 @@ interface AlertRepository {
      */
     suspend fun findPage(scope: WardScope, status: AlertStatus?, keyset: Keyset?, limit: Int): List<Alert>
 
+    /** Counts the ward's alerts across all pages, optionally only those with [status]. */
     suspend fun count(scope: WardScope, status: AlertStatus?): Long
 
     /**
@@ -74,13 +76,16 @@ interface ProcessedEventRepository {
      */
     suspend fun tryInsert(event: ProcessedEvent): Boolean
 
+    /** Returns the record of the event, or null when the event was never stored. */
     suspend fun find(eventId: String): ProcessedEvent?
 
+    /** Marks the record as completed, after all alerts of the event are written. */
     suspend fun markCompleted(eventId: String)
 }
 
 /** Adapter pattern (port) for id generation, injected so tests are deterministic. */
 fun interface IdGenerator {
+    /** Returns a new, unique id. */
     fun next(): String
 
     companion object {
@@ -90,15 +95,19 @@ fun interface IdGenerator {
 
 /** Business metrics the use cases report (port; the Micrometer adapter lives in `observability/`). */
 interface AlertMetrics {
+    /** Reports the alerts that were actually inserted; skipped duplicates are not included. */
     fun alertsCreated(alerts: List<Alert>)
 
+    /** Counts one processed event; [duplicate] is true when the event had been processed before. */
     fun eventProcessed(duplicate: Boolean)
 
     companion object {
         val NONE: AlertMetrics =
             object : AlertMetrics {
+                /** Records nothing. */
                 override fun alertsCreated(alerts: List<Alert>) = Unit
 
+                /** Records nothing. */
                 override fun eventProcessed(duplicate: Boolean) = Unit
             }
     }

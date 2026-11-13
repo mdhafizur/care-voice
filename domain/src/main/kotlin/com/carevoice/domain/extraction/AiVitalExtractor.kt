@@ -43,6 +43,7 @@ data class RawVitalCandidate(
  * rule results are never lost because a remote model failed.
  */
 fun interface AiVitalExtractor {
+    /** Returns the raw values a model found in a normalized transcript; an empty list when the model fails. */
     suspend fun extract(normalized: String): List<RawVitalCandidate>
 }
 
@@ -74,6 +75,7 @@ internal fun RawVitalCandidate.validate(): ExtractionOutcome {
     )
 }
 
+/** Needs both values as whole numbers, then runs the normal blood pressure range checks. */
 private fun RawVitalCandidate.validateBloodPressure(): Either<ValidationError, VitalSign> = either {
     val diastolic =
         ensureNotNull(secondaryValue) { InconsistentValues("blood pressure needs a systolic and a diastolic value") }
@@ -107,8 +109,10 @@ private fun RawVitalCandidate.describe(): String {
     return listOfNotNull("AI:", type.name, values, unit?.takeIf { it.isNotBlank() }?.trim()).joinToString(" ")
 }
 
+/** Prints whole numbers without ".0" (120.0 -> "120"); other values print as Kotlin writes them. */
 private fun Double.display(): String = if (isWhole()) toLong().toString() else toString()
 
+/** True for a finite whole number small enough to turn into a Long without losing digits. */
 private fun Double.isWhole(): Boolean = isFinite() && this == Math.rint(this) && abs(this) < MAX_EXACT_WHOLE
 
 /** Beyond 2^53 a Double cannot represent every integer, and toLong() would clamp, so such values print as written. */

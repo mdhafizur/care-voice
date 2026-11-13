@@ -8,11 +8,13 @@ import java.util.UUID
 
 @JvmInline
 value class ResidentId private constructor(val value: String) {
+    /** Returns the raw id, not the default "ResidentId(value=...)" form. */
     override fun toString(): String = value
 
     companion object {
         private val FORMAT = Regex("^[A-Za-z0-9-]{1,64}$")
 
+        /** Accepts 1-64 letters, digits or '-'; anything else, including blank input, is a validation error. */
         fun of(raw: String): Either<ValidationError, ResidentId> = either {
             ensure(raw.isNotBlank()) { BlankInput("residentId") }
             ensure(FORMAT.matches(raw)) { InconsistentValues("residentId must be 1-64 letters, digits or '-'") }
@@ -23,9 +25,11 @@ value class ResidentId private constructor(val value: String) {
 
 @JvmInline
 value class ObservationId(val value: UUID) {
+    /** Returns the plain UUID text, not the default "ObservationId(value=...)" form. */
     override fun toString(): String = value.toString()
 
     companion object {
+        /** Makes a new id from a random UUID; TranscriptProcessor uses this by default. */
         fun random(): ObservationId = ObservationId(UUID.randomUUID())
     }
 }

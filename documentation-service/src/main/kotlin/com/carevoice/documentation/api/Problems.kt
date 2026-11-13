@@ -39,6 +39,7 @@ object Problems {
     val CONTENT_TYPE: ContentType = ContentType("application", "problem+json")
     const val GENERIC_5XX = "An unexpected error occurred."
 
+    /** 415 error: the request body is not sent as `application/json`. */
     fun unsupportedMediaType(): ApiException = ApiException(
         HttpStatusCode.UnsupportedMediaType,
         "unsupported-media-type",
@@ -46,6 +47,7 @@ object Problems {
         "The request body must be sent as application/json.",
     )
 
+    /** 413 error: the request body is bigger than [limitBytes]. */
     fun payloadTooLarge(limitBytes: Long): ApiException = ApiException(
         HttpStatusCode.PayloadTooLarge,
         "payload-too-large",
@@ -53,6 +55,7 @@ object Problems {
         "The request body must not exceed $limitBytes bytes.",
     )
 
+    /** 400 error raised by the HTTP layer, optionally with field-level [errors]. */
     fun badRequest(detail: String, errors: List<FieldError> = emptyList()): ApiException =
         ApiException(HttpStatusCode.BadRequest, "bad-request", "Bad Request", detail, errors)
 }
@@ -107,6 +110,7 @@ private fun ApplicationCall.logRejected(status: Int, reason: String, vararg fiel
 
 private const val MAX_LOGGED_PATH = 256
 
+/** The stable `reason` slug written to the log for each application error type. */
 private fun ApplicationError.logReason(): String = when (this) {
     is ApplicationError.BadRequest, is ApplicationError.Unprocessable -> "validation-error"
     is ApplicationError.Unauthorized -> "unauthorized"

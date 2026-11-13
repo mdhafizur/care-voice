@@ -41,6 +41,7 @@ fun ApplicationCall.clientAddress(trustedProxies: List<IpNetwork>): String = cli
 
 private const val X_FORWARDED_FOR = "X-Forwarded-For"
 
+/** True when this address falls inside at least one of [networks]. */
 private fun InetAddress.isIn(networks: List<IpNetwork>): Boolean = networks.any { it.contains(this) }
 
 /** `1.2.3.4:5678` → `1.2.3.4`, `[::1]:5678` → `::1`; a bare IPv6 address is left alone. */

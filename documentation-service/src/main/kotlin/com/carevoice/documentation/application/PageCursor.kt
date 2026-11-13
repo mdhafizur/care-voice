@@ -18,6 +18,7 @@ data class PageCursor(val direction: Direction, val recordedAt: Instant, val id:
         BEFORE("b"),
     }
 
+    /** Turns the cursor into the opaque, URL-safe string that clients send back; [decode] reverses it. */
     fun encode(): String = Base64.getUrlEncoder().withoutPadding().encodeToString(
         "${direction.code}|$recordedAt|$id".toByteArray(Charsets.UTF_8),
     )
@@ -52,8 +53,10 @@ data class PageCursor(val direction: Direction, val recordedAt: Instant, val id:
             return PageCursor(direction, instant, id)
         }
 
+        /** Cursor for the page that starts right after [record] (the next page). */
         fun after(record: ObservationRecord): PageCursor = PageCursor(Direction.AFTER, record.recordedAt, record.id)
 
+        /** Cursor for the page that ends right before [record] (the previous page). */
         fun before(record: ObservationRecord): PageCursor = PageCursor(Direction.BEFORE, record.recordedAt, record.id)
     }
 }

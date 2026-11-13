@@ -39,6 +39,7 @@ import javax.sql.DataSource
  * Every query carries `tenant_id` AND `ward_id`: isolation is enforced in SQL, not only in the use case.
  */
 class PostgresObservationRepository(private val dataSource: DataSource) : ObservationRepository {
+    /** Inserts all records in one JDBC batch; an empty list does nothing. */
     override suspend fun insertAll(records: List<ObservationRecord>) {
         if (records.isEmpty()) return
         withConnection(dataSource) { connection ->
@@ -52,6 +53,7 @@ class PostgresObservationRepository(private val dataSource: DataSource) : Observ
         }
     }
 
+    /** Finds one observation, only inside the given tenant and ward. */
     override suspend fun findById(tenantId: String, wardId: String, observationId: UUID): ObservationRecord? =
         withReadConnection(dataSource) { connection ->
             connection.queryOne(
@@ -61,6 +63,7 @@ class PostgresObservationRepository(private val dataSource: DataSource) : Observ
             )
         }
 
+    /** One keyset page of a resident's observations, newest first. */
     override suspend fun listByResident(
         tenantId: String,
         wardId: String,
@@ -74,6 +77,10 @@ class PostgresObservationRepository(private val dataSource: DataSource) : Observ
         )
     }
 
+    /**
+     * One keyset page of the ward's observations, newest first.
+     * Each filter field that is set adds one condition; resident ids and vital types match any value in the list.
+     */
     override suspend fun query(
         tenantId: String,
         wardId: String,
@@ -105,6 +112,11 @@ class PostgresObservationRepository(private val dataSource: DataSource) : Observ
         keysetPage(connection, Where(conditions, params), page)
     }
 
+    /**
+     * Confirms the observation only when its version still equals [expectedVersion] (optimistic locking: the update
+     * fails instead of overwriting a change someone else made). A row that exists with another version gives
+     * VersionMismatch; no row gives NotFound.
+     */
     override suspend fun confirm(
         tenantId: String,
         wardId: String,
@@ -136,6 +148,10 @@ class PostgresObservationRepository(private val dataSource: DataSource) : Observ
         }
     }
 
+    /**
+     * Up to [limit] observations recorded after the given one, oldest first.
+     * Returns an empty list when that observation is not in this tenant and ward.
+     */
     override suspend fun findAfter(
         tenantId: String,
         wardId: String,
@@ -160,6 +176,10 @@ class PostgresObservationRepository(private val dataSource: DataSource) : Observ
         val sql: String get() = conditions.joinToString(" AND ")
     }
 
+    /**
+     * Runs the keyset query for [page] and adds the total count and the next and previous cursors.
+     * A cursor whose row is not in this scope is ignored, so the first page is returned.
+     */
     private fun keysetPage(connection: Connection, where: Where, page: PageRequest): Page<ObservationRecord> {
         val total =
             connection.queryOne("SELECT count(*) FROM observations WHERE ${where.sql}", where.params) { it.getLong(1) }
@@ -208,6 +228,7 @@ class PostgresObservationRepository(private val dataSource: DataSource) : Observ
         )
     }
 
+    /** True when the cursor's row exists inside this query's scope. */
     private fun cursorExists(connection: Connection, where: Where, cursor: PageCursor): Boolean = connection.queryOne(
         "SELECT 1 FROM observations WHERE ${where.sql} AND id = ? AND recorded_at = ?",
         where.params + listOf(cursor.id, cursor.recordedAt),
@@ -221,6 +242,7 @@ class PostgresObservationRepository(private val dataSource: DataSource) : Observ
         private const val INSERT_SQL =
             "INSERT INTO observations ($COLUMNS) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
 
+        /** The insert values in [COLUMNS] order; columns of the other vital types stay null. */
         private fun insertParams(record: ObservationRecord): List<Any?> {
             val vital = record.observation.vital
             return listOf(

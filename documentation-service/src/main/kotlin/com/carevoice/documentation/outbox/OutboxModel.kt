@@ -95,5 +95,6 @@ sealed interface PublishResult {
 
 /** Delivers one event to its consumer. Implementations must be safe to call concurrently. */
 fun interface EventPublisher {
+    /** Delivers one event; failures come back as a [PublishResult] value, not as exceptions. */
     suspend fun publish(event: OutboxEvent): PublishResult
 }

@@ -16,6 +16,7 @@ internal enum class TemperatureUnit {
     UNSPECIFIED,
     ;
 
+    /** Validates [value] in this scale and stores it in Celsius; for UNSPECIFIED the magnitude picks the scale. */
     fun measure(value: Double): Either<ValidationError, BodyTemperature> = when (this) {
         CELSIUS -> BodyTemperature.ofCelsius(value)
         FAHRENHEIT -> BodyTemperature.ofFahrenheit(value)

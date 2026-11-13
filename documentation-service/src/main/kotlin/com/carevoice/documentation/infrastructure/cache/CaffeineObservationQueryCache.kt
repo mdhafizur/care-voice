@@ -41,6 +41,7 @@ class CaffeineObservationQueryCache(
         CaffeineCacheMetrics.monitor(meterRegistry, cache, CACHE_NAME)
     }
 
+    /** Returns the cached page for [key], or runs [loader] and caches its page. */
     override suspend fun getOrLoad(
         key: ObservationQueryKey,
         loader: suspend () -> Page<ObservationRecord>,
@@ -53,6 +54,7 @@ class CaffeineObservationQueryCache(
         return loader().also { cache.put(key, it) }
     }
 
+    /** Removes every cached page of this tenant's ward. */
     override fun invalidateWard(tenantId: String, wardId: String) {
         val removed = cache.asMap().keys.removeIf { it.tenantId == tenantId && it.wardId == wardId }
         log.event(

@@ -24,6 +24,10 @@ import javax.sql.DataSource
  */
 class PostgresTranscriptRepository(private val dataSource: DataSource, private val encryptor: FieldEncryptor) :
     TranscriptRepository {
+    /**
+     * Inserts the transcript with its text encrypted and the response stored for replays.
+     * A second insert with the same idempotency key gives DuplicateIdempotencyKey instead of an error.
+     */
     override suspend fun insert(record: TranscriptRecord, text: String): TranscriptInsert {
         val encrypted = encryptor.encrypt(text)
         val body = StorageJson.encodeToString(StoredTranscriptResult.serializer(), record.result.toStored())
@@ -54,6 +58,7 @@ class PostgresTranscriptRepository(private val dataSource: DataSource, private v
         }
     }
 
+    /** Finds the user's earlier transcript with this idempotency key, so a repeated request can be replayed. */
     override suspend fun findByIdempotencyKey(createdBy: String, idempotencyKey: UUID): TranscriptRecord? =
         withReadConnection(dataSource) { connection ->
             connection.queryOne(
@@ -63,6 +68,7 @@ class PostgresTranscriptRepository(private val dataSource: DataSource, private v
             )
         }
 
+    /** Finds a transcript only when its resident belongs to the given ward. */
     override suspend fun findById(tenantId: String, wardId: String, transcriptId: UUID): TranscriptRecord? =
         withReadConnection(dataSource) { connection ->
             connection.queryOne(
@@ -72,6 +78,10 @@ class PostgresTranscriptRepository(private val dataSource: DataSource, private v
             )
         }
 
+    /**
+     * Deletes the encrypted text of up to [batchSize] transcripts created before [cutoff], oldest first, and returns
+     * how many it erased. `SKIP LOCKED` lets two pods do this at once without waiting for each other.
+     */
     override suspend fun eraseTextCreatedBefore(cutoff: Instant, batchSize: Int): Int =
         withConnection(dataSource) { connection ->
             connection.update(
@@ -87,6 +97,7 @@ class PostgresTranscriptRepository(private val dataSource: DataSource, private v
             )
         }
 
+    /** Maps a row to a record; the stored response body is decoded back to the domain result. */
     private fun toRecord(rs: ResultSet): TranscriptRecord = TranscriptRecord(
         id = rs.uuid("id"),
         tenantId = rs.getString("tenant_id"),

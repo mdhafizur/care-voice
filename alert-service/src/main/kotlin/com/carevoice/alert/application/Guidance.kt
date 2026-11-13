@@ -16,8 +16,10 @@ interface Embedder {
     /** Minimum cosine similarity for a chunk to count as relevant. Model-specific: score distributions differ. */
     val minScore: Double
 
+    /** Embeds texts for storage; one vector per text, in the same order. */
     suspend fun embedDocuments(texts: List<String>): List<FloatArray>
 
+    /** Embeds a search query; some models embed a query differently from a document. */
     suspend fun embedQuery(text: String): FloatArray
 }
 
@@ -26,6 +28,7 @@ data class ProtocolDocument(val id: String, val markdown: String)
 
 /** Port: where protocol documents come from (the classpath today; a document store or CMS later). */
 fun interface ProtocolSource {
+    /** Returns all protocol documents that belong in the knowledge base. */
     fun documents(): List<ProtocolDocument>
 }
 
@@ -34,11 +37,13 @@ fun interface ProtocolSource {
  * `version` is a hash of the model and all chunk texts, so unchanged documents are never re-embedded.
  */
 interface ProtocolChunkRepository {
+    /** Returns the stored corpus version for [model], or null when nothing is stored for it yet. */
     suspend fun corpusVersion(model: String): String?
 
     /** Stores [chunks] as the corpus of [model] in [version] and removes chunks of any other version of that model. */
     suspend fun replaceCorpus(model: String, version: String, chunks: List<EmbeddedChunk>)
 
+    /** Returns every stored chunk embedded with [model]; empty when none was ingested. */
     suspend fun findAll(model: String): List<EmbeddedChunk>
 }
 

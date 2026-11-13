@@ -44,6 +44,10 @@ class AlertApi(
     }
 }
 
+/**
+ * Registers all routes. Health, metrics and docs need no login.
+ * Events need the SERVICE role; the alert endpoints need WARD_LEAD and are rate-limited per user.
+ */
 fun Route.alertServiceRoutes(api: AlertApi) {
     operationsRoutes(api)
     authenticated {
@@ -84,6 +88,11 @@ private fun Route.eventRoutes(api: AlertApi) {
     }
 }
 
+/**
+ * `/v1/alerts`: list, get one, get guidance, and acknowledge. Every lookup stays inside the caller's ward.
+ * The list checks `status` and `limit` and answers 400 with all invalid fields at once.
+ * List, get and acknowledge send an ETag (a version tag of the body), so clients can check for changes cheaply.
+ */
 private fun Route.alertRoutes(api: AlertApi) {
     get {
         val query = call.request.queryParameters
@@ -142,6 +151,7 @@ private fun ApplicationCall.alertId(): String = parameters["alertId"].orEmpty()
 
 /** RFC 8288 `Link` with `first`, `next` (when more) and `prev` (when not on the first page). */
 internal fun linkHeader(status: AlertStatus?, limit: Int, nextCursor: String?, prevCursor: String?): String {
+    // Builds one page link; null means the first page, and the cursor is URL-encoded.
     fun url(cursor: String?): String = buildString {
         append("/v1/alerts?limit=").append(limit)
         status?.let { append("&status=").append(it.name) }

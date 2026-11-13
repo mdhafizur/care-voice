@@ -8,6 +8,7 @@ import javax.sql.DataSource
 /** Repository pattern: residents; the display name is stored encrypted and decrypted here, at the boundary. */
 class PostgresResidentRepository(private val dataSource: DataSource, private val encryptor: FieldEncryptor) :
     ResidentRepository {
+    /** Reads the resident inside the tenant and decrypts the display name. */
     override suspend fun findById(tenantId: String, residentId: String): Resident? =
         withReadConnection(dataSource) { connection ->
             connection.queryOne(

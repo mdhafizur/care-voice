@@ -25,6 +25,10 @@ class IngestProtocols(
 ) {
     private val log = LoggerFactory.getLogger(IngestProtocols::class.java)
 
+    /**
+     * Chunks all documents and compares the corpus version with the stored one.
+     * Only when they differ does it embed the chunks and replace the stored corpus.
+     */
     suspend fun execute(): IngestResult {
         val documents = source.documents()
         val chunks = documents.flatMap { ProtocolChunker.chunk(it.id, it.markdown) }
@@ -53,6 +57,10 @@ class IngestProtocols(
         /** Texts per embedding request (provider APIs limit batch sizes). */
         const val BATCH_SIZE = 32
 
+        /**
+         * SHA-256 hash (a fixed-size fingerprint) of the model name and all texts, as hex.
+         * A zero byte goes before each text, so `["ab"]` and `["a", "b"]` give different hashes.
+         */
         fun versionOf(model: String, texts: List<String>): String {
             val digest = MessageDigest.getInstance("SHA-256")
             digest.update(model.toByteArray())

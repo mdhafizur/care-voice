@@ -34,12 +34,17 @@ class Database private constructor(
 
     val hasReplica: Boolean get() = replica != null
 
+    /** Closes the replica pool (when there is one) and then the primary pool. */
     override fun close() {
         replica?.close()
         primary.close()
     }
 
     companion object {
+        /**
+         * Builds the primary pool and, when [readConfig] is set, a read-only replica pool.
+         * The replica pool may start while the replica is unreachable; reads then use the primary.
+         */
         fun create(config: DatabaseConfig, readConfig: ReadDatabaseConfig?, meterRegistry: MeterRegistry?): Database {
             val primary =
                 HikariDataSource(
@@ -82,6 +87,10 @@ class Database private constructor(
         /** PgJDBC socketTimeout in seconds; well above statement_timeout (5 s), so it only fires for a dead peer. */
         private const val SOCKET_TIMEOUT_SECONDS = 30
 
+        /**
+         * The Hikari settings both pools share: a small pool, READ COMMITTED, short connect timeouts,
+         * and a socket timeout so a dead database connection fails instead of hanging.
+         */
         internal fun hikariConfig(
             poolName: String,
             url: String,
@@ -138,13 +147,19 @@ internal class FallbackDataSource(
                 .register(it)
         }
 
+    /** Gets a connection from the replica, or from the primary when the replica fails. */
     override fun getConnection(): java.sql.Connection = withFallback({ preferred.connection }, { fallback.connection })
 
+    /** Same as the no-argument version, with explicit credentials for both pools. */
     override fun getConnection(username: String?, password: String?): java.sql.Connection = withFallback(
         { preferred.getConnection(username, password) },
         { fallback.getConnection(username, password) },
     )
 
+    /**
+     * Tries [preferredConnection] and uses [fallbackConnection] when it throws an [SQLException].
+     * Counts every fallback, and logs only the switch to the primary (WARN) and the switch back (INFO).
+     */
     private fun withFallback(
         preferredConnection: () -> java.sql.Connection,
         fallbackConnection: () -> java.sql.Connection,

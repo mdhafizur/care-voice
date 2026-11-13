@@ -17,6 +17,10 @@ import io.micrometer.core.instrument.MeterRegistry
  * it skips is not timed as a provider call.
  */
 object GuidanceHttpClient {
+    /**
+     * The shared HTTP client: 5 s connect timeout and 20 s default request timeout.
+     * `expectSuccess = false` means error statuses do not throw here; each adapter checks the status itself.
+     */
     fun create(): HttpClient = HttpClient(CIO) {
         install(HttpTimeout) {
             connectTimeoutMillis = 5_000
@@ -51,6 +55,7 @@ object GuidanceHttpClient {
                 )
         }
 
+    /** Wraps a remote embedder in its own circuit breaker (fails fast while the provider is down). */
     private fun guarded(embedder: Embedder, registry: MeterRegistry): Embedder =
         CircuitBreakingEmbedder(embedder, GuidanceCircuitBreakers.create(GuidanceCircuitBreakers.EMBEDDER, registry))
 

@@ -48,6 +48,7 @@ object AlertThresholds {
  * tested in isolation. [AlertEvaluator] is the Composite that applies many rules as if they were one.
  */
 interface AlertRule {
+    /** Returns what this rule found for the observation; an empty list when nothing is wrong. */
     fun evaluate(observation: Observation): List<AlertFinding>
 }
 
@@ -59,6 +60,7 @@ abstract class ThresholdRule(val type: AlertRuleType, val severity: Severity) : 
     /** Returns a human-readable description of the violation, or null when the vital is within limits. */
     protected abstract fun describeViolation(vital: Vital): String?
 
+    /** Fires one finding when the vital violates the limit; the message notes when the value is still unconfirmed. */
     final override fun evaluate(observation: Observation): List<AlertFinding> {
         val description = describeViolation(observation.vital) ?: return emptyList()
         val message =
@@ -76,6 +78,7 @@ abstract class ThresholdRule(val type: AlertRuleType, val severity: Severity) : 
 }
 
 class HypertensiveCrisisRule : ThresholdRule(AlertRuleType.HYPERTENSIVE_CRISIS, Severity.CRITICAL) {
+    /** Fires when systolic or diastolic is at or above its crisis limit. */
     override fun describeViolation(vital: Vital): String? {
         if (vital !is Vital.BloodPressure) return null
         val violated =
@@ -92,6 +95,7 @@ class HypertensiveCrisisRule : ThresholdRule(AlertRuleType.HYPERTENSIVE_CRISIS, 
 }
 
 class HypotensionRule : ThresholdRule(AlertRuleType.HYPOTENSION, Severity.WARNING) {
+    /** Fires when systolic is below the limit; diastolic is not checked. */
     override fun describeViolation(vital: Vital): String? =
         if (vital is Vital.BloodPressure && vital.systolic < AlertThresholds.HYPOTENSION_SYSTOLIC_BELOW) {
             "Blood pressure ${vital.systolic}/${vital.diastolic} mmHg: systolic < " +
@@ -102,6 +106,7 @@ class HypotensionRule : ThresholdRule(AlertRuleType.HYPOTENSION, Severity.WARNIN
 }
 
 class TachycardiaRule : ThresholdRule(AlertRuleType.TACHYCARDIA, Severity.WARNING) {
+    /** Fires when the pulse is above the limit. */
     override fun describeViolation(vital: Vital): String? =
         if (vital is Vital.Pulse && vital.bpm > AlertThresholds.TACHYCARDIA_PULSE_ABOVE) {
             "Pulse ${vital.bpm} bpm: above ${AlertThresholds.TACHYCARDIA_PULSE_ABOVE} (tachycardia)."
@@ -111,6 +116,7 @@ class TachycardiaRule : ThresholdRule(AlertRuleType.TACHYCARDIA, Severity.WARNIN
 }
 
 class BradycardiaRule : ThresholdRule(AlertRuleType.BRADYCARDIA, Severity.WARNING) {
+    /** Fires when the pulse is below the limit. */
     override fun describeViolation(vital: Vital): String? =
         if (vital is Vital.Pulse && vital.bpm < AlertThresholds.BRADYCARDIA_PULSE_BELOW) {
             "Pulse ${vital.bpm} bpm: below ${AlertThresholds.BRADYCARDIA_PULSE_BELOW} (bradycardia)."
@@ -120,6 +126,7 @@ class BradycardiaRule : ThresholdRule(AlertRuleType.BRADYCARDIA, Severity.WARNIN
 }
 
 class HighFeverRule : ThresholdRule(AlertRuleType.HIGH_FEVER, Severity.CRITICAL) {
+    /** Fires when the temperature is at or above the fever limit. */
     override fun describeViolation(vital: Vital): String? =
         if (vital is Vital.BodyTemperature && vital.celsius >= AlertThresholds.HIGH_FEVER_CELSIUS_MIN) {
             "Body temperature ${celsius(vital.celsius)} °C: at or above " +
@@ -130,6 +137,7 @@ class HighFeverRule : ThresholdRule(AlertRuleType.HIGH_FEVER, Severity.CRITICAL)
 }
 
 class HypothermiaRule : ThresholdRule(AlertRuleType.HYPOTHERMIA, Severity.CRITICAL) {
+    /** Fires when the temperature is below the hypothermia limit. */
     override fun describeViolation(vital: Vital): String? =
         if (vital is Vital.BodyTemperature && vital.celsius < AlertThresholds.HYPOTHERMIA_CELSIUS_BELOW) {
             "Body temperature ${celsius(vital.celsius)} °C: below " +
@@ -149,6 +157,7 @@ private fun celsius(value: Double): String = String.format(Locale.ROOT, "%.1f", 
  * composite does not assume that.
  */
 class AlertEvaluator(private val rules: List<AlertRule>) : AlertRule {
+    /** Runs every rule and joins their findings, in rule order. */
     override fun evaluate(observation: Observation): List<AlertFinding> = rules.flatMap { it.evaluate(observation) }
 
     companion object {

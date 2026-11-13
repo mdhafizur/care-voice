@@ -37,6 +37,7 @@ data class ClaudeSettings(
         require(model.isNotBlank()) { "model must not be blank" }
     }
 
+    /** Hides the API key, so the settings can be logged safely. */
     override fun toString(): String = "ClaudeSettings(apiKey=***, model=$model, timeout=$timeout, baseUrl=$baseUrl)"
 }
 
@@ -54,6 +55,10 @@ class ClaudeGuidanceWriter(private val settings: ClaudeSettings, private val htt
 
     private val endpoint = settings.baseUrl.trimEnd('/') + "/v1/messages"
 
+    /**
+     * Calls the Claude Messages API and turns the answer into steps; null when the model declined.
+     * Throws on a non-2xx status, so the caller can fall back to the extractive writer.
+     */
     override suspend fun write(situation: String, sources: List<ScoredChunk>): List<GuidanceStep>? {
         val response =
             httpClient.post(endpoint) {
@@ -68,6 +73,7 @@ class ClaudeGuidanceWriter(private val settings: ClaudeSettings, private val htt
         return parse(textOf(body))
     }
 
+    /** JSON body for the Messages API: system prompt, one user message, temperature 0 and a token limit. */
     private fun requestBody(situation: String, sources: List<ScoredChunk>): String = buildJsonObject {
         put("model", settings.model)
         put("max_tokens", MAX_TOKENS)
@@ -88,6 +94,7 @@ class ClaudeGuidanceWriter(private val settings: ClaudeSettings, private val htt
 
         val SYSTEM_PROMPT: String = GuidancePrompt.CLAUDE_SYSTEM
 
+        /** The user prompt shared by all providers ([GuidancePrompt.userPrompt]). */
         fun userPrompt(situation: String, sources: List<ScoredChunk>): String =
             GuidancePrompt.userPrompt(situation, sources)
 

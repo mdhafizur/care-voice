@@ -12,6 +12,10 @@ import org.slf4j.MDC
  * agent (tests, local runs) `Span.current()` is the invalid no-op span and no traceparent is stored.
  */
 class MdcCorrelationProvider : CorrelationProvider {
+    /**
+     * Builds the correlation ids for the current request: `requestId` from the MDC and a `traceparent` header value
+     * from the current span, or null when there is no real span.
+     */
     override fun current(): Correlation {
         val context = Span.current().spanContext
         val traceparent =

@@ -26,6 +26,10 @@ class ConfirmObservation(
 ) {
     private val log = LoggerFactory.getLogger(ConfirmObservation::class.java)
 
+    /**
+     * Confirms the observation and writes an audit entry in one transaction, then clears the ward's cached pages.
+     * An id that is not a UUID is a 404. [expectedVersion] is the `If-Match` value; null means the header was missing.
+     */
     suspend fun execute(caller: Caller, observationId: String, expectedVersion: Int?): ObservationRecord {
         caller.requireAnyRole()
         val id = parseUuid(observationId) ?: throw ApplicationError.NotFound("Observation", observationId)

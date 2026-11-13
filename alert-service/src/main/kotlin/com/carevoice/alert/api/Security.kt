@@ -40,13 +40,16 @@ enum class Role { NURSE, WARD_LEAD, SERVICE }
 
 /** JWT verification settings; mirrors `JwtConfig` without coupling the API layer to the config package. */
 data class JwtSettings(val secret: ByteArray, val issuer: String, val audience: String) {
+    /** Compares the secret by content; the generated data-class equals would only compare array references. */
     override fun equals(other: Any?): Boolean = other is JwtSettings &&
         secret.contentEquals(other.secret) &&
         issuer == other.issuer &&
         audience == other.audience
 
+    /** Hashes the secret by content, so it stays consistent with equals. */
     override fun hashCode(): Int = arrayOf<Any>(secret.contentHashCode(), issuer, audience).contentHashCode()
 
+    /** Hides the secret, so it never ends up in logs. */
     override fun toString(): String = "JwtSettings(secret=***, issuer=$issuer, audience=$audience)"
 }
 
@@ -183,6 +186,7 @@ val PrincipalMdc =
 private object CallPhaseWithMdc : Hook<suspend (ApplicationCall, suspend () -> Unit) -> Unit> {
     private val phase = PipelinePhase("PrincipalMdc")
 
+    /** Adds a new phase right before the Call phase and runs the handler in it. */
     override fun install(
         pipeline: ApplicationCallPipeline,
         handler: suspend (ApplicationCall, suspend () -> Unit) -> Unit,

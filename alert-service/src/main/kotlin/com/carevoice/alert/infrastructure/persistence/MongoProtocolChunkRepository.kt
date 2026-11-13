@@ -41,11 +41,16 @@ class MongoProtocolChunkRepository(database: MongoDatabase) : ProtocolChunkRepos
     private val chunks = database.getCollection(ProtocolChunkFields.COLLECTION, Document::class.java)
     private val corpora = database.getCollection(ProtocolChunkFields.CORPUS_COLLECTION, Document::class.java)
 
+    /** The corpus version currently stored for [model], or null when nothing was stored yet. */
     override suspend fun corpusVersion(model: String): String? = MongoErrors.translate {
         corpora.find(Filters.eq(ProtocolChunkFields.ID, model)).limit(1).firstOrNull()
             ?.getString(ProtocolChunkFields.VERSION)
     }
 
+    /**
+     * Stores the new chunks, deletes the chunks of older versions, and only then writes the new version record.
+     * This order means a reader never sees a version whose chunks are missing.
+     */
     override suspend fun replaceCorpus(model: String, version: String, chunks: List<EmbeddedChunk>) {
         MongoErrors.translate {
             if (chunks.isNotEmpty()) {
@@ -77,6 +82,7 @@ class MongoProtocolChunkRepository(database: MongoDatabase) : ProtocolChunkRepos
         }
     }
 
+    /** All chunks of [model] in their original document order. */
     override suspend fun findAll(model: String): List<EmbeddedChunk> = MongoErrors.translate {
         chunks
             .find(Filters.eq(ProtocolChunkFields.MODEL, model))
@@ -85,6 +91,7 @@ class MongoProtocolChunkRepository(database: MongoDatabase) : ProtocolChunkRepos
             .toList()
     }
 
+    /** One chunk as a document. The id `<model>|<chunkId>` is the same on every run, so a rerun replaces it. */
     private fun toDocument(model: String, version: String, order: Int, embedded: EmbeddedChunk): Document {
         val chunk = embedded.chunk
         return Document(ProtocolChunkFields.ID, "$model|${chunk.id}")
@@ -99,6 +106,7 @@ class MongoProtocolChunkRepository(database: MongoDatabase) : ProtocolChunkRepos
             .append(ProtocolChunkFields.VECTOR, embedded.vector.map { it.toDouble() })
     }
 
+    /** Reads a stored chunk back; the vector is stored as doubles and turned back into floats. */
     private fun fromDocument(document: Document): EmbeddedChunk {
         val vector = document.getList(ProtocolChunkFields.VECTOR, Number::class.java)
         return EmbeddedChunk(

@@ -32,6 +32,7 @@ class ClaudeVitalExtractor(
 ) {
     override val endpoint: String = settings.baseUrl.trimEnd('/') + MESSAGES_PATH
 
+    /** Sends the API key and the required API version header. */
     override fun HttpRequestBuilder.authenticate() {
         header(API_KEY_HEADER, settings.apiKey)
         header(VERSION_HEADER, API_VERSION)
@@ -51,6 +52,7 @@ class ClaudeVitalExtractor(
         }
     }.toString()
 
+    /** Joins the text blocks of a Messages API response. */
     override fun answerText(responseBody: String): String? = ClaudeResponseParser.textOf(responseBody)
 
     companion object {

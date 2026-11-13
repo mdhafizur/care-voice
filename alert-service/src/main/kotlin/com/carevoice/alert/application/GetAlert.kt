@@ -16,6 +16,7 @@ import org.slf4j.event.Level
 class GetAlert(private val alerts: AlertRepository) {
     private val log = LoggerFactory.getLogger(GetAlert::class.java)
 
+    /** Returns the alert, or throws AlertNotFound when it does not exist or belongs to another ward. */
     suspend fun execute(scope: WardScope, alertId: String): Alert = alerts.findById(scope, alertId) ?: run {
         // Same 404 for "does not exist" and "other ward"; the id is user input, so it is capped.
         log.event(Level.DEBUG, LogType.BUSINESS, "Alert not found in ward", "alertId" to alertId.take(256))

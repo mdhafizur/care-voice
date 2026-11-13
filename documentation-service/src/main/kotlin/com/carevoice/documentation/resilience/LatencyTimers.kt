@@ -22,6 +22,10 @@ object LatencyTimers {
     val SLO_BUCKETS: Array<Duration> =
         arrayOf(Duration.ofMillis(100), Duration.ofMillis(300), Duration.ofSeconds(1), Duration.ofSeconds(2))
 
+    /**
+     * Registers a timer that publishes histogram buckets (with [SLO_BUCKETS] added) from 1 ms to 30 s,
+     * so percentiles can be computed over all instances together.
+     */
     fun timer(registry: MeterRegistry, name: String, description: String, tags: Tags): Timer = Timer
         .builder(name)
         .description(description)

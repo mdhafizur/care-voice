@@ -29,12 +29,20 @@ internal object MongoErrors {
     private val TRANSIENT_CODES =
         setOf(6, 7, 89, 91, 189, 262, 9001, 10107, 11600, 11602, 13388, 13435, 13436)
 
+    /**
+     * Runs [block] and turns transient MongoDB errors into [AlertServiceException.DependencyUnavailable].
+     * Other errors are rethrown unchanged.
+     */
     suspend fun <T> translate(block: suspend () -> T): T = try {
         block()
     } catch (e: MongoException) {
         throw if (isTransient(e)) AlertServiceException.DependencyUnavailable(DEPENDENCY, e) else e
     }
 
+    /**
+     * True for errors that may go away by themselves: timeouts, network errors, a failover,
+     * a retryable error label, or a server code in [TRANSIENT_CODES].
+     */
     fun isTransient(e: Throwable): Boolean = when (e) {
         is MongoTimeoutException,
         is MongoSocketException,
@@ -53,6 +61,7 @@ internal object MongoErrors {
         else -> false
     }
 
+    /** True when a single-document write failed because the unique key already exists. */
     fun isDuplicateKey(e: MongoWriteException): Boolean = e.error.category == ErrorCategory.DUPLICATE_KEY
 
     /** True when every per-document error of a bulk insert is a duplicate key and no write concern error occurred. */

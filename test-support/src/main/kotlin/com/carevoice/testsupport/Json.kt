@@ -29,6 +29,10 @@ fun assertJsonEquals(expected: String, actual: String) {
     }
 }
 
+/**
+ * Walks both JSON trees side by side and adds one message per difference to [differences].
+ * [path] is the JSON path so far (e.g. "$.items[0].id"), so each message says where the difference is.
+ */
 private fun compare(expected: JsonElement, actual: JsonElement, path: String, differences: MutableList<String>) {
     when {
         expected is JsonPrimitive && expected.isString && expected.content.startsWith("<any-") ->
@@ -58,6 +62,7 @@ private fun compare(expected: JsonElement, actual: JsonElement, path: String, di
     }
 }
 
+/** True when [actual] fits the "<any-...>" placeholder; an unknown placeholder is a test bug and throws. */
 private fun matchesPlaceholder(placeholder: String, actual: JsonElement): Boolean {
     if (actual is JsonNull || actual !is JsonPrimitive) return false
     return when (placeholder) {

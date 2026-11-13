@@ -38,6 +38,7 @@ object Vectors {
  * thousands of chunks; the retrieval port lets the service switch without touching the use case.
  */
 object Retriever {
+    /** The best [k] chunks by cosine score (vector similarity), at or above [minScore]; ties are sorted by chunk id. */
     fun topK(query: FloatArray, corpus: List<EmbeddedChunk>, k: Int, minScore: Double): List<ScoredChunk> {
         require(k > 0) { "k must be positive" }
         return corpus

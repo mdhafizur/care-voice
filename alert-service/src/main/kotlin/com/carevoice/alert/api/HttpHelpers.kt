@@ -35,6 +35,7 @@ suspend fun ApplicationCall.receiveJsonText(): String {
     return String(bytes, Charsets.UTF_8)
 }
 
+/** Throws 415 (Unsupported Media Type) unless the body is declared as JSON; parameters like charset are ignored. */
 fun ApplicationCall.requireJsonContentType() {
     val type = runCatching { request.contentType() }.getOrNull()
     if (type == null || !type.withoutParameters().match(ContentType.Application.Json)) {

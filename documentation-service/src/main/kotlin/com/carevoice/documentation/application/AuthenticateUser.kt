@@ -26,6 +26,7 @@ class AuthenticateUser(
 ) {
     private val log = LoggerFactory.getLogger(AuthenticateUser::class.java)
 
+    /** Checks the credentials and returns a signed token. Every failure throws the same 401 error. */
     suspend fun execute(username: String, password: String): IssuedToken {
         if (username.isBlank() || password.isEmpty() || username.length > MAX_LENGTH || password.length > MAX_LENGTH) {
             // Still pay for one hash so even malformed attempts take the usual time.

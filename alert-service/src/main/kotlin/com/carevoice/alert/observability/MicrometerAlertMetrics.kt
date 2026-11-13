@@ -13,6 +13,7 @@ import io.micrometer.core.instrument.MeterRegistry
  * - `carevoice_events_processed_total{result=processed|duplicate}` — events by outcome, both transports.
  */
 class MicrometerAlertMetrics(private val registry: MeterRegistry) : AlertMetrics {
+    /** Counts each alert once, tagged by rule and severity. */
     override fun alertsCreated(alerts: List<Alert>) {
         alerts.forEach { alert ->
             Counter
@@ -25,6 +26,7 @@ class MicrometerAlertMetrics(private val registry: MeterRegistry) : AlertMetrics
         }
     }
 
+    /** Counts one event, tagged as "duplicate" or "processed". */
     override fun eventProcessed(duplicate: Boolean) {
         Counter
             .builder("carevoice.events.processed")

@@ -53,6 +53,11 @@ class TranscriptProcessor(
     private val clock: Clock = Clock.systemUTC(),
     private val newId: () -> ObservationId = ObservationId::random,
 ) {
+    /**
+     * Turns one transcript into observations for [residentId], all with the same timestamp.
+     * A blank or too long transcript gives a Left (the error side of Either) instead of a result.
+     * The AI fallback runs only when the rules found no valid value.
+     */
     suspend fun process(residentId: ResidentId, transcript: String): Either<ValidationError, ProcessingResult> =
         either {
             ensure(transcript.isNotBlank()) { BlankInput("transcript") }

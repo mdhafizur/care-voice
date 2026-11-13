@@ -77,6 +77,7 @@ internal val StorageJson: Json =
         encodeDefaults = true
     }
 
+/** Converts a record to its stored JSON shape; ids and times become strings. */
 internal fun ObservationRecord.toStored(): StoredObservation = StoredObservation(
     id = id.toString(),
     tenantId = tenantId,
@@ -93,6 +94,7 @@ internal fun ObservationRecord.toStored(): StoredObservation = StoredObservation
     version = version,
 )
 
+/** Converts the stored shape back to a record; the vital and resident id are checked again on the way. */
 internal fun StoredObservation.toRecord(): ObservationRecord = ObservationRecord(
     observation =
     Observation(
@@ -112,6 +114,7 @@ internal fun StoredObservation.toRecord(): ObservationRecord = ObservationRecord
     version = version,
 )
 
+/** Converts a transcript result to the shape kept in the `response_body` column. */
 internal fun TranscriptResult.toStored(): StoredTranscriptResult = StoredTranscriptResult(
     transcriptId = transcriptId.toString(),
     residentId = residentId,
@@ -120,6 +123,7 @@ internal fun TranscriptResult.toStored(): StoredTranscriptResult = StoredTranscr
     usedAiFallback = usedAiFallback,
 )
 
+/** Converts a stored `response_body` back to the result an idempotent replay returns. */
 internal fun StoredTranscriptResult.toDomain(): TranscriptResult = TranscriptResult(
     transcriptId = UUID.fromString(transcriptId),
     residentId = residentId,
@@ -128,6 +132,7 @@ internal fun StoredTranscriptResult.toDomain(): TranscriptResult = TranscriptRes
     usedAiFallback = usedAiFallback,
 )
 
+/** Converts a vital sign to its stored form, tagged by vital type. */
 internal fun VitalSign.toStored(): StoredVital = when (this) {
     is BloodPressure -> StoredVital.BloodPressureValue(systolic, diastolic)
     is Pulse -> StoredVital.PulseValue(bpm)
@@ -144,6 +149,7 @@ internal fun StoredVital.toDomain(): VitalSign = when (this) {
     is StoredVital.BodyTemperatureValue -> BodyTemperature.ofCelsius(celsius).orThrow("temperature")
 }
 
+/** Returns the valid value, or throws when stored data fails validation; [what] names the field in the message. */
 internal fun <T> Either<ValidationError, T>.orThrow(what: String): T = when (this) {
     is Either.Left -> throw IllegalStateException("Stored $what is invalid: ${value.message}")
     is Either.Right -> value

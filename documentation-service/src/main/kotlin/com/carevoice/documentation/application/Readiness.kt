@@ -31,12 +31,14 @@ class Readiness(private val probes: List<HealthProbe>) {
     /** Last status per probe, so a change is logged once instead of on every 5-second probe. */
     private val lastStatus = ConcurrentHashMap<String, HealthStatus>()
 
+    /** Makes every later [check] report not ready. There is no way back: it is only called at shutdown. */
     fun markShuttingDown() {
         shuttingDown.set(true)
     }
 
     val isShuttingDown: Boolean get() = shuttingDown.get()
 
+    /** Runs all probes in parallel. Ready only when no critical probe is DOWN and no shutdown has started. */
     suspend fun check(): ReadinessReport {
         val results =
             coroutineScope {
@@ -82,6 +84,7 @@ class Readiness(private val probes: List<HealthProbe>) {
         return ReadinessReport(ready, overall, results)
     }
 
+    /** The status used when a probe throws: DOWN for a critical dependency, DEGRADED for the others. */
     private fun fallback(probe: HealthProbe): HealthStatus =
         if (probe.critical) HealthStatus.DOWN else HealthStatus.DEGRADED
 

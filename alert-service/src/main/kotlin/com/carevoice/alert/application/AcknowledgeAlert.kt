@@ -17,6 +17,7 @@ sealed interface VersionPrecondition {
     /** `If-Match: "3"` (or a list). Unparseable entries are dropped; an empty set never matches. */
     data class OneOf(val versions: Set<Long>) : VersionPrecondition
 
+    /** True for `If-Match: *`; otherwise only when [version] is one of the listed versions. */
     fun matches(version: Long): Boolean = when (this) {
         AnyVersion -> true
         is OneOf -> version in versions
@@ -36,6 +37,10 @@ sealed interface VersionPrecondition {
 class AcknowledgeAlert(private val alerts: AlertRepository, private val clock: Clock) {
     private val log = LoggerFactory.getLogger(AcknowledgeAlert::class.java)
 
+    /**
+     * Acknowledges the alert and returns it with its new version; the checks run in the order described above.
+     * If a concurrent write wins between our read and our write, [lostRace] picks the matching error.
+     */
     suspend fun execute(
         scope: WardScope,
         alertId: String,

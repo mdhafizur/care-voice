@@ -17,6 +17,7 @@ object CursorCodec {
     private const val BEFORE = "b"
     private const val MAX_ENCODED_LENGTH = 512
 
+    /** Turns [keyset] into the opaque cursor string; [decode] reverses it. */
     fun encode(keyset: Keyset): String {
         val prefix = if (keyset.direction == Keyset.Direction.OLDER) AFTER else BEFORE
         val raw = "$prefix|${keyset.createdAt}|${keyset.id}"

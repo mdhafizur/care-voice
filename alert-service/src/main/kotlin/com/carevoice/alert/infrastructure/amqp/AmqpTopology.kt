@@ -55,13 +55,21 @@ object AmqpTopology {
     /** Retry tier (0-based index into [RETRY_DELAYS]) to use after delivery [attempt] (1-based) failed. */
     fun retryTier(attempt: Int): Int = (attempt - 1).coerceIn(0, RETRY_DELAYS.lastIndex)
 
+    /** Name of the retry queue for [tier]. Tier 0 keeps the old single retry queue name. */
     fun retryQueue(tier: Int): String = if (tier == 0) RETRY_QUEUE else "$RETRY_QUEUE.${tierSuffix(tier)}"
 
+    /** Routing key for the retry queue of [tier] on [RETRY_EXCHANGE]; tier 0 uses [QUEUE_ROUTING_KEY]. */
     fun retryRoutingKey(tier: Int): String =
         if (tier == 0) QUEUE_ROUTING_KEY else "$QUEUE_ROUTING_KEY.retry.${tierSuffix(tier)}"
 
+    /** Name suffix of a tier: its delay in whole seconds, e.g. "30s". */
     private fun tierSuffix(tier: Int): String = "${RETRY_DELAYS[tier].inWholeSeconds}s"
 
+    /**
+     * Declares all exchanges, queues and bindings on [channel].
+     * Safe to call on every startup and reconnect: declaring something that already exists with the same
+     * arguments changes nothing.
+     */
     fun declare(channel: Channel) {
         channel.exchangeDeclare(EVENTS_EXCHANGE, BuiltinExchangeType.TOPIC, true)
         channel.exchangeDeclare(RETRY_EXCHANGE, BuiltinExchangeType.DIRECT, true)

@@ -30,6 +30,10 @@ object GuidanceQuery {
 
     const val REVIEW_QUERY = "unconfirmed value needs review low confidence recheck the measurement"
 
+    /**
+     * Always one clinical query from the rule, vital and severity.
+     * A second review query is added when the alert message says the value is unconfirmed.
+     */
     fun forAlert(alert: Alert): List<RetrievalQuery> = buildList {
         val severity = alert.severity.name.lowercase()
         val clinical = "${ruleTerms.getValue(alert.rule)}. ${describe(alert.vital)}. $severity alert"
@@ -39,6 +43,7 @@ object GuidanceQuery {
         }
     }
 
+    /** Describes the measured value in words and units, e.g. `pulse 130 bpm heart rate`. */
     private fun describe(vital: Vital): String = when (vital) {
         is Vital.BloodPressure -> "blood pressure ${vital.systolic}/${vital.diastolic} mmHg"
         is Vital.Pulse -> "pulse ${vital.bpm} bpm heart rate"

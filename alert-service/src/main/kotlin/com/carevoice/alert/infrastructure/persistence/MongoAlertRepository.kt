@@ -63,6 +63,7 @@ class MongoAlertRepository(database: MongoDatabase) : AlertRepository {
         }
     }
 
+    /** Finds the alert only inside the given ward, so an id from another ward or tenant returns null. */
     override suspend fun findById(scope: WardScope, alertId: String): Alert? = MongoErrors.translate {
         collection
             .find(Filters.and(scopeFilter(scope), Filters.eq(AlertFields.ID, alertId)))
@@ -71,6 +72,10 @@ class MongoAlertRepository(database: MongoDatabase) : AlertRepository {
             .firstOrNull()
     }
 
+    /**
+     * One page of alerts, newest first, using keyset paging (continue after the last seen createdAt and id,
+     * instead of skipping rows). For the NEWER direction the rows come back oldest first (ascending sort).
+     */
     override suspend fun findPage(scope: WardScope, status: AlertStatus?, keyset: Keyset?, limit: Int): List<Alert> {
         val filters = mutableListOf(scopeFilter(scope))
         status?.let { filters += Filters.eq(AlertFields.STATUS, it.name) }
@@ -91,6 +96,7 @@ class MongoAlertRepository(database: MongoDatabase) : AlertRepository {
         }
     }
 
+    /** Counts the ward's alerts, optionally only those with [status]. */
     override suspend fun count(scope: WardScope, status: AlertStatus?): Long {
         val filter =
             if (status == null) {
@@ -144,6 +150,7 @@ class MongoAlertRepository(database: MongoDatabase) : AlertRepository {
         }
     }
 
+    /** Limits a query to one tenant and ward; every query starts with it. */
     private fun scopeFilter(scope: WardScope): Bson =
         Filters.and(Filters.eq(AlertFields.TENANT_ID, scope.tenantId), Filters.eq(AlertFields.WARD_ID, scope.wardId))
 

@@ -20,8 +20,10 @@ import java.time.format.DateTimeParseException
 
 /* Mapper pattern: explicit functions between application types and DTOs, in both directions. */
 
+/** The public view of a resident: id, ward and display name only. */
 fun Resident.toResponse(): ResidentResponse = ResidentResponse(id = id, wardId = wardId, displayName = displayName)
 
+/** Flattens the stored record for the API: enums become their names and times become ISO-8601 strings. */
 fun ObservationRecord.toDto(): ObservationDto = ObservationDto(
     id = id.toString(),
     residentId = observation.residentId.value,
@@ -35,12 +37,14 @@ fun ObservationRecord.toDto(): ObservationDto = ObservationDto(
     version = version,
 )
 
+/** Maps each kind of vital sign to its own JSON shape (the `type` field tells them apart). */
 fun VitalSign.toDto(): VitalDto = when (this) {
     is BloodPressure -> VitalDto.BloodPressure(systolic, diastolic)
     is Pulse -> VitalDto.Pulse(bpm)
     is BodyTemperature -> VitalDto.BodyTemperature(celsius)
 }
 
+/** The response for a submitted transcript: the saved observations, the rejected matches, and the AI flag. */
 fun TranscriptResult.toResponse(): TranscriptResponse = TranscriptResponse(
     transcriptId = transcriptId.toString(),
     residentId = residentId,
@@ -49,6 +53,7 @@ fun TranscriptResult.toResponse(): TranscriptResponse = TranscriptResponse(
     usedAiFallback = usedAiFallback,
 )
 
+/** Copies a validation error into its JSON form. */
 fun FieldError.toDto(): FieldErrorDto = FieldErrorDto(field, message)
 
 /** `?limit=` and `?cursor=` → [PageRequest]; anything malformed is a 400 with field errors. */
@@ -119,6 +124,7 @@ fun ObservationFilterRequest.toQuery(): Pair<ObservationFilter, PageRequest> {
     return ObservationFilter(residents.toSet(), types.toSet(), parsedStatus, from, to) to page
 }
 
+/** Parses [raw] as an ISO-8601 instant. A bad value adds a field error and gives null; null input stays null. */
 private fun instantOrError(field: String, raw: String?, errors: MutableList<FieldError>): Instant? = raw?.let {
     try {
         Instant.parse(it)

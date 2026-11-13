@@ -14,6 +14,7 @@ import org.slf4j.event.Level
 class GetResident(private val residents: ResidentRepository) {
     private val log = LoggerFactory.getLogger(GetResident::class.java)
 
+    /** Returns the resident, or a 404 when it does not exist or belongs to another ward. */
     suspend fun execute(caller: Caller, residentId: String): Resident {
         caller.requireAnyRole()
         val resident = residents.findById(caller.tenantId, residentId)

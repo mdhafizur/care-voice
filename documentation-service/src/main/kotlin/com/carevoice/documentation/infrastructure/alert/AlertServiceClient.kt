@@ -76,6 +76,10 @@ class AlertServiceClient(
         meterRegistry,
     )
 
+    /**
+     * Sends one event to alert-service behind the circuit breaker (a switch that stops calls while the service keeps
+     * failing). A missing service token gives Retryable; an open breaker gives CircuitOpen without a call.
+     */
     override suspend fun publish(event: OutboxEvent): PublishResult {
         // Fetched outside the breaker: a local token problem says nothing about alert-service's health.
         val token =
@@ -94,6 +98,7 @@ class AlertServiceClient(
         }
     }
 
+    /** Sends the HTTP POST with the token, idempotency key and correlation headers; transport errors are Retryable. */
     private suspend fun send(event: OutboxEvent, token: String): PublishResult = try {
         val mark = TimeSource.Monotonic.markNow()
         val response =
@@ -132,6 +137,7 @@ class AlertServiceClient(
         PublishResult.Retryable(failure?.reason ?: "unexpected client error: ${e::class.simpleName}")
     }
 
+    /** Maps the HTTP status to a [PublishResult], following the table in the class comment. */
     private fun classify(status: HttpStatusCode, retryAfterHeader: String?): PublishResult = when {
         status.value in 200..299 -> PublishResult.Published
 

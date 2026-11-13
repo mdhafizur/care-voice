@@ -22,6 +22,10 @@ class QueryObservations(
 ) {
     private val log = LoggerFactory.getLogger(QueryObservations::class.java)
 
+    /**
+     * Returns one page of the ward's matching observations, from the cache when possible.
+     * `recordedFrom` after `recordedTo` is a 422 error.
+     */
     suspend fun execute(caller: Caller, filter: ObservationFilter, page: PageRequest): Page<ObservationRecord> {
         caller.requireAnyRole()
         val from = filter.recordedFrom

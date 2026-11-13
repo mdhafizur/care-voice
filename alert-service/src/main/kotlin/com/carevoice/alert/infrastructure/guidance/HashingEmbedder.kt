@@ -25,10 +25,17 @@ class HashingEmbedder(private val dimensions: Int = DEFAULT_DIMENSIONS) : Embedd
     /** Unrelated text scores below ~0.1 against the protocols, the matching protocol above ~0.4 (evaluation set). */
     override val minScore: Double = 0.2
 
+    /** Documents and queries are embedded the same way; this embedder has no asymmetric mode. */
     override suspend fun embedDocuments(texts: List<String>): List<FloatArray> = texts.map(::embed)
 
+    /** Same as a document: the hashing embedder treats queries and documents alike. */
     override suspend fun embedQuery(text: String): FloatArray = embed(text)
 
+    /**
+     * Hashes each word and each pair of neighbouring words to a position in the vector.
+     * One hash bit picks the sign (+ or -), so collisions tend to cancel out instead of always adding up.
+     * Repeated words count as 1 + ln(count), so they do not dominate. The result has length 1.
+     */
     fun embed(text: String): FloatArray {
         val tokens = tokenize(text)
         val features = tokens + tokens.zipWithNext { a, b -> "$a $b" }

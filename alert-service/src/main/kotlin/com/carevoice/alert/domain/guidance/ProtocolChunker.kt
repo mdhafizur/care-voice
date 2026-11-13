@@ -11,6 +11,11 @@ package com.carevoice.alert.domain.guidance
 object ProtocolChunker {
     const val MAX_CHARS = 1_200
 
+    /**
+     * Returns one chunk per `##` section (or more for long sections), numbered `<documentId>#1`, `#2`, ...
+     * Each chunk text starts with `<title>. <section>.` so the search also matches the protocol and section names.
+     * Throws when the id is not lowercase kebab-case (words joined by `-`) or the document has no `# ` title.
+     */
     fun chunk(documentId: String, markdown: String): List<ProtocolChunk> {
         require(documentId.matches(Regex("[a-z0-9-]+"))) { "documentId must be lowercase kebab-case: $documentId" }
         val lines = markdown.lines()

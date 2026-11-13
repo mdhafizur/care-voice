@@ -49,15 +49,18 @@ data class AppConfig(
  *   start otherwise; migrations are then applied by the `migrate` one-shot (Kubernetes pre-upgrade Job).
  */
 data class MongoConfig(val uri: String, val database: String, val poolSize: Int, val migrateOnStartup: Boolean) {
+    /** Hides the user and password in the URI, so the config can be logged safely. */
     override fun toString(): String =
         "MongoConfig(uri=${redactUserInfo(uri)}, database=$database, poolSize=$poolSize, " +
             "migrateOnStartup=$migrateOnStartup)"
 }
 
 data class JwtConfig(val secret: ByteArray, val issuer: String, val audience: String) {
+    /** Compares the secret by content; the generated data-class equals would only compare array references. */
     override fun equals(other: Any?): Boolean =
         other is JwtConfig && secret.contentEquals(other.secret) && issuer == other.issuer && audience == other.audience
 
+    /** Hashes the secret by content, so it stays consistent with equals. */
     override fun hashCode(): Int = arrayOf<Any>(secret.contentHashCode(), issuer, audience).contentHashCode()
 
     /** Never prints the secret, so the config can be logged at startup and appear in failed assertions safely. */
@@ -68,6 +71,7 @@ data class JwtConfig(val secret: ByteArray, val issuer: String, val audience: St
  * @property prefetch maximum unacknowledged deliveries per consumer (`basicQos`): broker-side backpressure.
  */
 data class RabbitMqConfig(val url: String, val prefetch: Int) {
+    /** Hides the user and password in the URL, so the config can be logged safely. */
     override fun toString(): String = "RabbitMqConfig(url=${redactUserInfo(url)}, prefetch=$prefetch)"
 }
 
@@ -98,6 +102,7 @@ data class GuidanceConfig(
     /** Which LLM writes the guidance (`AI_PROVIDER`, shared with documentation-service). */
     enum class AiProvider { CLAUDE, GEMINI }
 
+    /** Shows API keys only as `***` (or null when unset), so the config can be logged safely. */
     override fun toString(): String =
         "GuidanceConfig(embedder=$embedder, voyageApiKey=${voyageApiKey?.let { "***" }}, voyageModel=$voyageModel, " +
             "aiEnabled=$aiEnabled, aiProvider=$aiProvider, anthropicApiKey=${anthropicApiKey?.let { "***" }}, " +
@@ -124,6 +129,7 @@ class ConfigException(val errors: List<String>) :
 private class ConfigLoader(private val env: Map<String, String>) {
     private val errors = mutableListOf<String>()
 
+    /** Reads and checks every value; throws ConfigException with all errors when anything is missing or invalid. */
     fun load(): AppConfig {
         val httpPort = int("HTTP_PORT", AppConfig.DEFAULT_HTTP_PORT, 1..65_535)
         val mongoUri = required("MONGO_URI")
@@ -163,6 +169,10 @@ private class ConfigLoader(private val env: Map<String, String>) {
         )
     }
 
+    /**
+     * Reads the guidance settings. An API key is required only for a provider that is actually used.
+     * An unknown name is recorded as an error and a default is kept, so loading goes on and finds more errors.
+     */
     private fun guidance(): GuidanceConfig {
         val embedder =
             when (optional("GUIDANCE_EMBEDDER")?.lowercase()) {
@@ -227,10 +237,13 @@ private class ConfigLoader(private val env: Map<String, String>) {
         }
     }
 
+    /** Returns the trimmed value, or null when the variable is unset or blank. */
     private fun optional(name: String): String? = env[name]?.trim()?.takeIf { it.isNotEmpty() }
 
+    /** Like [optional], but a missing value is also recorded as an error. */
     private fun required(name: String): String? = optional(name) ?: null.also { errors += "$name is required" }
 
+    /** Parses an integer inside [range]; [default] when unset. An invalid value is recorded and gives null. */
     private fun int(name: String, default: Int, range: IntRange): Int? {
         val raw = optional(name) ?: return default
         val value = raw.toIntOrNull()
@@ -241,6 +254,7 @@ private class ConfigLoader(private val env: Map<String, String>) {
         return value
     }
 
+    /** Accepts only `true` or `false` (any case); [default] when unset. Anything else is recorded and gives null. */
     private fun boolean(name: String, default: Boolean): Boolean? = when (optional(name)?.lowercase()) {
         null -> default
         "true" -> true
@@ -248,6 +262,7 @@ private class ConfigLoader(private val env: Map<String, String>) {
         else -> null.also { errors += "$name must be 'true' or 'false'" }
     }
 
+    /** Records an error unless the URL scheme is `amqp` or `amqps` (the RabbitMQ protocol). */
     private fun validateAmqpUrl(url: String) {
         val scheme = runCatching { URI(url).scheme }.getOrNull()
         if (scheme != "amqp" && scheme != "amqps") errors += "RABBITMQ_URL must be an amqp:// or amqps:// URL"

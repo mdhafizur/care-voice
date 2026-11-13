@@ -20,6 +20,7 @@ class ListResidentObservations(
 ) {
     private val log = LoggerFactory.getLogger(ListResidentObservations::class.java)
 
+    /** Returns one page of the resident's observations; 404 when the resident is not in the caller's ward. */
     suspend fun execute(caller: Caller, residentId: String, page: PageRequest): Page<ObservationRecord> {
         caller.requireAnyRole()
         requireVisibleResident(caller, residentId)
@@ -37,6 +38,7 @@ class ListResidentObservations(
         }
     }
 
+    /** Emits every observation of the resident, fetching [pageSize] rows per query (see the class comment). */
     fun asFlow(caller: Caller, residentId: String, pageSize: Int = PageLimits.MAX): Flow<ObservationRecord> = flow {
         caller.requireAnyRole()
         requireVisibleResident(caller, residentId)
@@ -53,6 +55,7 @@ class ListResidentObservations(
         } while (cursor != null)
     }
 
+    /** Throws a 404 unless the resident exists and is in the caller's ward. Both cases look the same to the client. */
     private suspend fun requireVisibleResident(caller: Caller, residentId: String) {
         val resident = residents.findById(caller.tenantId, residentId)
         if (resident == null || !caller.canSee(resident.tenantId, resident.wardId)) {

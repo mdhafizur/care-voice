@@ -55,6 +55,7 @@ fun Route.observationRoutes(deps: Dependencies) {
     }
 }
 
+/** Shared handler for QUERY and POST search: reads the filter body and answers one page, with an ETag. */
 private suspend fun RoutingContext.queryObservations(deps: Dependencies) {
     val caller = call.caller()
     val request = call.receiveJson(ObservationFilterRequest.serializer(), deps.http.maxBodyBytes)

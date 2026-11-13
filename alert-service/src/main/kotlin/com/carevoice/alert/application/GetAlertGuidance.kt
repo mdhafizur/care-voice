@@ -33,6 +33,10 @@ class GetAlertGuidance(
     private val writer: GuidanceWriter?,
     private val extractive: GuidanceWriter = ExtractiveGuidanceWriter(),
 ) {
+    /**
+     * Builds guidance for one alert: finds the best protocol per query, then writes cited steps from it.
+     * Answers NO_MATCHING_PROTOCOL when no section scores at least the embedder's minimum score.
+     */
     suspend fun execute(scope: WardScope, alertId: String): AlertGuidance {
         val alert = alerts.findById(scope, alertId) ?: throw AlertServiceException.AlertNotFound(alertId)
         val corpus = chunks?.findAll(embedder.model).orEmpty()
@@ -89,6 +93,7 @@ class GetAlertGuidance(
         return AlertGuidance(alert, GuidanceStatus.FOUND, generator, steps, sources)
     }
 
+    /** Embeds a query; a failing embedding service becomes DependencyUnavailable (503). Cancellation is passed on. */
     private suspend fun embed(text: String): FloatArray = try {
         embedder.embedQuery(text)
     } catch (e: CancellationException) {
@@ -97,6 +102,10 @@ class GetAlertGuidance(
         throw AlertServiceException.DependencyUnavailable("embedding service", e)
     }
 
+    /**
+     * Asks [writer] for steps and keeps them only when they are grounded (they cite retrieved sections only).
+     * Returns null when the writer throws, declines or is not grounded, so the caller uses the extractive writer.
+     */
     private suspend fun generate(
         writer: GuidanceWriter,
         situation: String,
@@ -158,6 +167,7 @@ class GetAlertGuidance(
 class ExtractiveGuidanceWriter : GuidanceWriter {
     override val generator: GuidanceGenerator = GuidanceGenerator.EXTRACTIVE
 
+    /** Copies the bullets of the action sections (all sections when none match), at most MAX_STEPS steps. */
     override suspend fun write(situation: String, sources: List<ScoredChunk>): List<GuidanceStep> {
         val actionable = sources.filter { it.chunk.section in ACTION_SECTIONS }.ifEmpty { sources }
         return actionable

@@ -38,6 +38,10 @@ class RedisRateLimiter(
         FAIL_OPEN_METRIC,
     ).description("Rate-limit checks allowed because Redis was unavailable").register(meterRegistry)
 
+    /**
+     * Counts the request in Redis with one atomic script and allows it while the count is within [limit].
+     * When Redis fails or is not connected, it allows the request, except for [floorScopes], which use [fallback].
+     */
     override suspend fun tryAcquire(scope: String, key: String, limit: Int, window: Duration): RateLimitDecision {
         val connection = redis.commandsOrNull()
         if (connection != null) {
@@ -148,6 +152,10 @@ class InMemoryRateLimiter(private val clock: Clock = Clock.systemUTC()) : Distri
 
     private val windows = ConcurrentHashMap<String, Window>()
 
+    /**
+     * Counts the request in this process's memory, in windows aligned to the clock.
+     * Ended windows are removed once the map holds more than [MAX_KEYS] keys.
+     */
     override suspend fun tryAcquire(scope: String, key: String, limit: Int, window: Duration): RateLimitDecision {
         val now = clock.millis()
         val size = window.inWholeMilliseconds

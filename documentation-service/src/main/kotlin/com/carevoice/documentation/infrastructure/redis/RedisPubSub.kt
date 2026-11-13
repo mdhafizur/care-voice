@@ -40,6 +40,7 @@ class RedisCacheInvalidationBus(private val redis: RedisConnections) : CacheInva
         redis.subscribe(CHANNEL) { raw -> decode(raw)?.let(::deliver) }
     }
 
+    /** Publishes to every replica through Redis; when that fails, invalidates only this replica's caches. */
     override suspend fun publish(message: CacheInvalidation) {
         try {
             redis.publish(CHANNEL, StorageJson.encodeToString(InvalidationMessage.serializer(), message.toWire()))
@@ -62,10 +63,12 @@ class RedisCacheInvalidationBus(private val redis: RedisConnections) : CacheInva
         }
     }
 
+    /** Adds a local listener; it gets messages from every replica, this one included. */
     override fun subscribe(listener: (CacheInvalidation) -> Unit) {
         listeners += listener
     }
 
+    /** Passes the message to all local listeners. */
     private fun deliver(message: CacheInvalidation) {
         log.event(
             Level.DEBUG,
@@ -106,9 +109,11 @@ class RedisCacheInvalidationBus(private val redis: RedisConnections) : CacheInva
         return message
     }
 
+    /** Builds an observation-query invalidation, or null when tenant or ward is missing. */
     private fun InvalidationMessage.observationQuery(): CacheInvalidation? =
         if (tenant != null && ward != null) CacheInvalidation.ObservationQuery(tenant, ward) else null
 
+    /** Converts the message to its wire format, which carries only ids. */
     private fun CacheInvalidation.toWire(): InvalidationMessage = when (this) {
         is CacheInvalidation.ObservationQuery -> InvalidationMessage(
             OBSERVATION_QUERY,
@@ -153,6 +158,7 @@ class RedisObservationBroadcaster(private val redis: RedisConnections) : Observa
         }
     }
 
+    /** Publishes each record through Redis; a record whose publish fails goes to local listeners only. */
     override suspend fun publish(records: List<ObservationRecord>) {
         records.forEach { record ->
             try {
@@ -178,10 +184,12 @@ class RedisObservationBroadcaster(private val redis: RedisConnections) : Observa
         }
     }
 
+    /** Adds a local listener for observations from every replica. */
     override fun subscribe(listener: (ObservationRecord) -> Unit) {
         listeners += listener
     }
 
+    /** Passes the record to all local listeners, which feed the live (SSE) streams. */
     private fun deliver(record: ObservationRecord) {
         log.event(
             Level.DEBUG,
@@ -202,8 +210,10 @@ class RedisObservationBroadcaster(private val redis: RedisConnections) : Observa
 class LocalCacheInvalidationBus : CacheInvalidationBus {
     private val listeners = CopyOnWriteArrayList<(CacheInvalidation) -> Unit>()
 
+    /** Delivers the message straight to the local listeners. */
     override suspend fun publish(message: CacheInvalidation) = listeners.forEach { it(message) }
 
+    /** Adds a local listener. */
     override fun subscribe(listener: (CacheInvalidation) -> Unit) {
         listeners += listener
     }
@@ -212,10 +222,12 @@ class LocalCacheInvalidationBus : CacheInvalidationBus {
 class LocalObservationBroadcaster : ObservationBroadcaster {
     private val listeners = CopyOnWriteArrayList<(ObservationRecord) -> Unit>()
 
+    /** Delivers each record straight to the local listeners. */
     override suspend fun publish(records: List<ObservationRecord>) = records.forEach { record ->
         listeners.forEach { it(record) }
     }
 
+    /** Adds a local listener. */
     override fun subscribe(listener: (ObservationRecord) -> Unit) {
         listeners += listener
     }

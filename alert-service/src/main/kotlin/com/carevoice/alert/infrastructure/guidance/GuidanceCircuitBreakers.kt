@@ -42,6 +42,10 @@ object GuidanceCircuitBreakers {
     const val WRITER = "guidance-writer"
     const val EMBEDDER = "guidance-embedder"
 
+    /**
+     * Builds a count-based breaker named [name] and exports its metrics to [registry].
+     * A circuit breaker stops calling a failing service for a while, so callers fail fast instead of waiting.
+     */
     fun create(
         name: String,
         registry: MeterRegistry,
@@ -108,6 +112,7 @@ class CircuitBreakingGuidanceWriter(private val delegate: GuidanceWriter, val ci
     GuidanceWriter {
     override val generator: GuidanceGenerator = delegate.generator
 
+    /** Passes the call through the breaker; an open breaker throws at once. */
     override suspend fun write(situation: String, sources: List<ScoredChunk>): List<GuidanceStep>? =
         circuitBreaker.guard { delegate.write(situation, sources) }
 }
@@ -120,10 +125,13 @@ class CircuitBreakingEmbedder(private val delegate: Embedder, val circuitBreaker
     override val model: String = delegate.model
     override val minScore: Double = delegate.minScore
 
+    /** Passes the call through the breaker; an open breaker throws at once. */
     override suspend fun embedDocuments(texts: List<String>): List<FloatArray> =
         circuitBreaker.guard { delegate.embedDocuments(texts) }
 
+    /** Passes the call through the breaker; an open breaker throws at once. */
     override suspend fun embedQuery(text: String): FloatArray = circuitBreaker.guard { delegate.embedQuery(text) }
 
+    /** Uses the wrapped embedder's text, so logs show the real provider. */
     override fun toString(): String = delegate.toString()
 }

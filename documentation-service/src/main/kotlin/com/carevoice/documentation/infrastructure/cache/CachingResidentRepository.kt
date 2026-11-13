@@ -43,6 +43,7 @@ class CachingResidentRepository(
         CaffeineCacheMetrics.monitor(meterRegistry, cache, CACHE_NAME)
     }
 
+    /** Returns the cached resident, or loads it from the delegate and caches it; unknown ids are not cached. */
     override suspend fun findById(tenantId: String, residentId: String): Resident? {
         val key = Key(tenantId, residentId)
         cache.getIfPresent(key)?.let {
@@ -65,6 +66,7 @@ class CachingResidentRepository(
         if (message is CacheInvalidation.ResidentEntry) invalidate(message.residentId)
     }
 
+    /** Removes every cached entry with this resident id, whatever the tenant. */
     fun invalidate(residentId: String) {
         val removed = cache.asMap().keys.removeIf { it.residentId == residentId }
         log.event(

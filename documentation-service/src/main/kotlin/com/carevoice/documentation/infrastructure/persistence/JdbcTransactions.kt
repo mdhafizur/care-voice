@@ -40,6 +40,10 @@ internal class TransactionConnection(val connection: Connection) : AbstractCorou
  * because the MDC is thread-local and would otherwise be lost in every database log line.
  */
 class JdbcTransactions(private val dataSource: DataSource) : TransactionRunner {
+    /**
+     * Runs [block] in one JDBC transaction on [Dispatchers.IO]: commit on success, rollback on any exception.
+     * A nested call joins the outer transaction. An unreachable database becomes a 503.
+     */
     override suspend fun <T> inTransaction(block: suspend () -> T): T {
         // Nested call: join the outer transaction instead of opening a second connection.
         if (currentCoroutineContext()[TransactionConnection] != null) return block()
@@ -62,11 +66,16 @@ class JdbcTransactions(private val dataSource: DataSource) : TransactionRunner {
         }
     }
 
+    /**
+     * Runs [block] only when this transaction gets the advisory lock (a named lock the application defines in
+     * PostgreSQL); returns null at once when another transaction holds it.
+     */
     override suspend fun <T : Any> tryWithAdvisoryLock(lockName: String, block: suspend () -> T): T? = inTransaction {
         if (AdvisoryLocks.tryXactLock(currentConnection(), lockName)) block() else null
     }
 
     companion object {
+        /** The connection of the current coroutine's transaction; throws when the caller is not in a transaction. */
         internal suspend fun currentConnection(): Connection =
             currentCoroutineContext()[TransactionConnection]?.connection
                 ?: error("No transaction in the current coroutine context")
@@ -145,6 +154,7 @@ private inline fun <T> unavailableAs503(block: () -> T): T = try {
  * and compatible with PgBouncer in transaction mode, where a session-level lock could leak to another client.
  */
 object AdvisoryLocks {
+    /** Tries to take the lock for the current transaction without waiting; true when it was taken. */
     fun tryXactLock(connection: Connection, lockName: String): Boolean =
         connection.prepareStatement("SELECT pg_try_advisory_xact_lock(?)").use { statement ->
             statement.setLong(1, keyOf(lockName))

@@ -47,11 +47,17 @@ class VoyageEmbedder(
         require(apiKey.isNotBlank()) { "apiKey must not be blank" }
     }
 
+    /** Embeds the protocol chunks with input type "document"; an empty list makes no API call. */
     override suspend fun embedDocuments(texts: List<String>): List<FloatArray> =
         if (texts.isEmpty()) emptyList() else embed(texts, "document")
 
+    /** Embeds the alert text with input type "query". */
     override suspend fun embedQuery(text: String): FloatArray = embed(listOf(text), "query").single()
 
+    /**
+     * Sends all [texts] in one request and returns the vectors in the order of [texts].
+     * The answer is sorted by its `index` field, because the order of `data` is not relied on.
+     */
     private suspend fun embed(texts: List<String>, inputType: String): List<FloatArray> {
         val body =
             buildJsonObject {
@@ -75,9 +81,11 @@ class VoyageEmbedder(
             .map { item -> toVector(item.getValue("embedding").jsonArray) }
     }
 
+    /** Turns a JSON array of numbers into a vector of length 1 (normalized). */
     private fun toVector(values: JsonArray): FloatArray =
         Vectors.normalize(FloatArray(values.size) { values[it].jsonPrimitive.float })
 
+    /** Hides the API key, so the embedder can be logged safely. */
     override fun toString(): String = "VoyageEmbedder(model=$model, apiKey=***)"
 
     companion object {

@@ -44,6 +44,7 @@ object Backoff {
         return random.nextLong(0, ceilingNanos + 1).nanoseconds
     }
 
+    /** Rejects a negative attempt, a non-positive base, a cap below base, and a cap too large to calculate with. */
     private fun validate(attempt: Int, base: Duration, cap: Duration) {
         require(attempt >= 0) { "attempt must be >= 0 but was $attempt" }
         require(base.isPositive()) { "base must be positive but was $base" }

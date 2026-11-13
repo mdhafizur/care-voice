@@ -52,10 +52,15 @@ class GeminiVitalExtractor(
 ) {
     override val endpoint: String = generateContentUrl(settings.baseUrl, settings.model)
 
+    /** Sends the API key as a header, not in the URL. */
     override fun HttpRequestBuilder.authenticate() {
         header(API_KEY_HEADER, settings.apiKey)
     }
 
+    /**
+     * Builds a `generateContent` request: the shared prompt, JSON-only output with [RESPONSE_SCHEMA],
+     * an output token limit and, when set, the thinking level.
+     */
     override fun requestBody(normalized: String): String = buildJsonObject {
         putJsonObject("systemInstruction") {
             putJsonArray("parts") { addJsonObject { put("text", VitalExtractionPrompt.SYSTEM) } }
@@ -74,6 +79,7 @@ class GeminiVitalExtractor(
         }
     }.toString()
 
+    /** Reads the first candidate's answer text, skipping thought summaries. */
     override fun answerText(responseBody: String): String? = GeminiResponseParser.textOf(responseBody)
 
     companion object {

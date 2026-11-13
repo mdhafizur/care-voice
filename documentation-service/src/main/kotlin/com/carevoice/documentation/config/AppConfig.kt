@@ -72,6 +72,7 @@ data class DatabaseConfig(
     val prepareThreshold: Int?,
     val migrateOnStartup: Boolean,
 ) {
+    /** Shows every field except the password. */
     override fun toString(): String =
         "DatabaseConfig(url=$url, user=$user, password=***, poolSize=$poolSize, migrationUrl=$migrationUrl, " +
             "prepareThreshold=$prepareThreshold, migrateOnStartup=$migrateOnStartup)"
@@ -79,17 +80,21 @@ data class DatabaseConfig(
 
 /** Optional streaming replica used ONLY by QueryObservations (docs/CONTRACTS.md, section 14, "High availability"). */
 data class ReadDatabaseConfig(val url: String, val user: String, val password: String) {
+    /** Shows the URL and user, never the password. */
     override fun toString(): String = "ReadDatabaseConfig(url=$url, user=$user, password=***)"
 }
 
 data class JwtConfig(val secret: ByteArray, val issuer: String, val audience: String, val accessTokenTtl: Duration) {
+    /** Compares [secret] by its bytes. A data class would compare arrays by identity (the same object) only. */
     override fun equals(other: Any?): Boolean =
         other is JwtConfig && secret.contentEquals(other.secret) && issuer == other.issuer &&
             audience == other.audience && accessTokenTtl == other.accessTokenTtl
 
+    /** Built from the secret's bytes, so it matches [equals]. */
     override fun hashCode(): Int =
         arrayOf<Any>(secret.contentHashCode(), issuer, audience, accessTokenTtl).contentHashCode()
 
+    /** Hides the secret. */
     override fun toString(): String =
         "JwtConfig(secret=***, issuer=$issuer, audience=$audience, accessTokenTtl=$accessTokenTtl)"
 }
@@ -99,12 +104,15 @@ data class JwtConfig(val secret: ByteArray, val issuer: String, val audience: St
  * decrypt, which is what makes key rotation possible without re-encrypting the whole database in one go.
  */
 data class EncryptionConfig(val activeKeyId: String, val keys: Map<String, ByteArray>) {
+    /** Compares the key bytes, not the array objects, so two configs with the same keys are equal. */
     override fun equals(other: Any?): Boolean =
         other is EncryptionConfig && activeKeyId == other.activeKeyId && keys.keys == other.keys.keys &&
             keys.all { (id, key) -> key.contentEquals(other.keys.getValue(id)) }
 
+    /** Uses the key ids only, not the key bytes; this still agrees with [equals]. */
     override fun hashCode(): Int = activeKeyId.hashCode() * 31 + keys.keys.hashCode()
 
+    /** Lists the key ids only, never the keys. */
     override fun toString(): String = "EncryptionConfig(activeKeyId=$activeKeyId, keyIds=${keys.keys})"
 }
 
@@ -130,12 +138,14 @@ data class AiConfig(
     val thinkingLevel: String? = null,
     val timeout: Duration? = null,
 ) {
+    /** Hides the API key; it only shows whether one is set. */
     override fun toString(): String =
         "AiConfig(enabled=$enabled, provider=$provider, apiKey=${apiKey?.let { "***" }}, model=$model, " +
             "thinkingLevel=$thinkingLevel, timeout=$timeout)"
 }
 
 data class DemoSeedConfig(val enabled: Boolean, val password: String?) {
+    /** Hides the password; it only shows whether one is set. */
     override fun toString(): String = "DemoSeedConfig(enabled=$enabled, password=${password?.let { "***" }})"
 }
 
@@ -157,6 +167,7 @@ private class ConfigLoader(private val env: Map<String, String>) {
         return database
     }
 
+    /** Reads the primary database settings. `DATABASE_MIGRATION_URL` falls back to `DATABASE_URL`. */
     private fun database(): DatabaseConfig {
         val databaseUrl = jdbcUrl("DATABASE_URL", required = true) ?: ""
         return DatabaseConfig(
@@ -170,6 +181,10 @@ private class ConfigLoader(private val env: Map<String, String>) {
         )
     }
 
+    /**
+     * Reads and checks every setting, then throws one [ConfigException] when anything was wrong.
+     * The read replica, when `DATABASE_READ_URL` is set, reuses the primary's user and password unless its own are set.
+     */
     fun load(): AppConfig {
         val database = database()
         val readDatabase =
@@ -229,6 +244,7 @@ private class ConfigLoader(private val env: Map<String, String>) {
         return config
     }
 
+    /** The trimmed value of [name], or null when it is unset or blank. */
     private fun optional(name: String): String? = env[name]?.trim()?.takeIf { it.isNotEmpty() }
 
     /** Comma-separated CIDR networks (`10.42.0.0/16,fd00::/8`); empty when unset. Every invalid entry is reported. */
@@ -239,13 +255,16 @@ private class ConfigLoader(private val env: Map<String, String>) {
         }
     }
 
+    /** Like [optional], but records an error and returns an empty string when the value is missing. */
     private fun required(name: String): String = optional(name) ?: run {
         errors += "$name is required"
         ""
     }
 
+    /** The integer value of [name], or [default] when it is unset or invalid (an invalid value is also recorded). */
     private fun int(name: String, default: Int, range: IntRange): Int = optionalInt(name, range) ?: default
 
+    /** The integer value of [name], or null. A value that is not a number in [range] is recorded as an error. */
     private fun optionalInt(name: String, range: IntRange): Int? {
         val raw = optional(name) ?: return null
         val value = raw.toIntOrNull()
@@ -256,6 +275,7 @@ private class ConfigLoader(private val env: Map<String, String>) {
         return value
     }
 
+    /** Accepts `true` or `false` in any letter case; anything else is recorded and gives [default]. */
     private fun boolean(name: String, default: Boolean): Boolean = when (optional(name)?.lowercase()) {
         null -> default
 
@@ -269,6 +289,7 @@ private class ConfigLoader(private val env: Map<String, String>) {
         }
     }
 
+    /** A value that must start with `jdbc:postgresql://`; otherwise an error is recorded and null returned. */
     private fun jdbcUrl(name: String, required: Boolean): String? {
         val value = if (required) required(name).takeIf { it.isNotEmpty() } else optional(name)
         if (value != null && !value.startsWith("jdbc:postgresql://")) {
@@ -278,8 +299,10 @@ private class ConfigLoader(private val env: Map<String, String>) {
         return value
     }
 
+    /** A URL that must use `http` or `https`. */
     private fun httpUrl(name: String, required: Boolean): String? = uri(name, setOf("http", "https"), required)
 
+    /** A URL whose scheme must be one of [schemes]. The scheme is read from the text before the first comma. */
     private fun uri(name: String, schemes: Set<String>, required: Boolean): String? {
         val value = if (required) required(name).takeIf { it.isNotEmpty() } else optional(name)
         value ?: return null
@@ -291,6 +314,7 @@ private class ConfigLoader(private val env: Map<String, String>) {
         return value
     }
 
+    /** `AI_PROVIDER`: `claude` (the default) or `gemini`, in any letter case. */
     private fun aiProvider(): AiProvider = when (optional("AI_PROVIDER")?.lowercase()) {
         null, "claude" -> AiProvider.CLAUDE
 
@@ -316,6 +340,7 @@ private class ConfigLoader(private val env: Map<String, String>) {
         }
     }
 
+    /** `EVENT_TRANSPORT`: `amqp` (the default) or `http`, in any letter case. */
     private fun eventTransport(): EventTransport = when (optional("EVENT_TRANSPORT")?.lowercase()) {
         null, "amqp" -> EventTransport.AMQP
 
@@ -327,6 +352,7 @@ private class ConfigLoader(private val env: Map<String, String>) {
         }
     }
 
+    /** `JWT_SECRET` as UTF-8 bytes; it must be at least [MIN_JWT_SECRET_BYTES] long. */
     private fun jwtSecret(): ByteArray {
         val secret = required("JWT_SECRET")
         val bytes = secret.toByteArray(Charsets.UTF_8)
@@ -362,6 +388,7 @@ private class ConfigLoader(private val env: Map<String, String>) {
         return EncryptionConfig(activeId, keys)
     }
 
+    /** Decodes a base64 AES-256 key (exactly 32 bytes). Returns null for an empty value or a bad key (recorded). */
     private fun decodeKey(name: String, base64: String): ByteArray? {
         if (base64.isEmpty()) return null
         val bytes = runCatching { Base64.getDecoder().decode(base64) }.getOrNull()
@@ -372,6 +399,7 @@ private class ConfigLoader(private val env: Map<String, String>) {
         return bytes
     }
 
+    /** `DEMO_PASSWORD`, required when demo seeding is on, with at least [MIN_DEMO_PASSWORD_LENGTH] characters. */
     private fun demoPassword(): String {
         val password = required("DEMO_PASSWORD")
         if (password.isNotEmpty() && password.length < MIN_DEMO_PASSWORD_LENGTH) {

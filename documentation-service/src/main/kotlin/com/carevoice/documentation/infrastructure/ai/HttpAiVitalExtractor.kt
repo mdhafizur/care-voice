@@ -102,6 +102,10 @@ abstract class HttpAiVitalExtractor(
     /** The model's answer text from a 2xx body; null when the body is not a response of this API at all. */
     protected abstract fun answerText(responseBody: String): String?
 
+    /**
+     * Runs one extraction, then records its outcome in the counter and timer and writes one log line.
+     * Never throws for API problems: any failure gives an empty list.
+     */
     override suspend fun extract(normalized: String): List<RawVitalCandidate> {
         val mark = TimeSource.Monotonic.markNow()
         val result = extractClassified(normalized)
@@ -129,6 +133,10 @@ abstract class HttpAiVitalExtractor(
         return result.candidates
     }
 
+    /**
+     * Calls the model behind the circuit breaker (a switch that stops calls while the API keeps failing) with retries,
+     * and sorts the result into an [Outcome]. Unexpected exceptions become [Outcome.ERROR], not a failed request.
+     */
     private suspend fun extractClassified(normalized: String): Classified {
         if (normalized.isBlank()) return Classified(Outcome.EMPTY)
         val guarded =
@@ -164,6 +172,11 @@ abstract class HttpAiVitalExtractor(
         }
     }
 
+    /**
+     * Makes one HTTP call and turns the answer into an [Attempt].
+     * 429 and 5xx are retryable and count against the breaker; other 4xx are neither, because they mean our own
+     * request is wrong. Timeouts count against the breaker but are not retried.
+     */
     private suspend fun call(normalized: String): Attempt = try {
         val response =
             httpClient.post(endpoint) {

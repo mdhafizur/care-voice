@@ -39,10 +39,15 @@ class CheckReadiness(private val checks: List<DependencyHealthCheck>) {
     /** Last state per check, so a change is logged once instead of on every 5-second probe. */
     private val lastState = ConcurrentHashMap<String, HealthState>()
 
+    /** From now on every check reports not ready, so the load balancer stops sending traffic before the drain. */
     fun markShuttingDown() {
         shuttingDown = true
     }
 
+    /**
+     * Runs every check; ready only when all are UP and the pod is not shutting down.
+     * A check that throws counts as DOWN. Cancellation is passed on.
+     */
     suspend fun check(): ReadinessReport {
         val results =
             checks.associate { check ->

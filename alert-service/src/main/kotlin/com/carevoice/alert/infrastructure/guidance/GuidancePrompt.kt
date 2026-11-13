@@ -38,6 +38,10 @@ object GuidancePrompt {
     val GEMINI_SYSTEM: String =
         RULES + "\n" + """- If the excerpts do not cover this alert, return {"steps": []}."""
 
+    /**
+     * The alert text, then each excerpt in an <excerpt> tag with its id, protocol and section,
+     * so the model can cite the excerpt by its id.
+     */
     fun userPrompt(situation: String, sources: List<ScoredChunk>): String = buildString {
         append("Alert: ").append(situation).append("\n\nProtocol excerpts:\n")
         for (source in sources) {

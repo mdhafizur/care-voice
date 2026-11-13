@@ -55,6 +55,7 @@ private const val TEMPERATURE_KEYWORDS = "temperature|temp"
 // to inference ("44 ° fahrenheit" would become 44 °C). TemperatureUnit.parse understands every alternative.
 private const val TEMPERATURE_UNITS = """(?:degrees?\s+|°\s*)(?:fahrenheit|celsius|f|c)|fahrenheit|celsius|degrees?"""
 
+/** Regex that matches one of [alternatives] only as a whole word, never inside a longer word (guard 1). */
 private fun word(alternatives: String) = """(?<![a-z])(?:$alternatives)(?![a-z])"""
 
 private val anyKeyword = word("$BLOOD_PRESSURE_KEYWORDS|$PULSE_KEYWORDS|$TEMPERATURE_KEYWORDS")
@@ -68,6 +69,7 @@ private const val NUMBER_START = """(?<!\d|\d[.,/])"""
 /** Guard 3: not continued by more digits, a decimal part or another slash. */
 private const val NUMBER_END = """(?!\d|[.,/]\d)"""
 
+/** Turns a validation result into a rule outcome: an error becomes a rejected candidate, a value an extracted vital. */
 private fun <V : VitalSign> Either<ValidationError, V>.toOutcome(
     matchedText: String,
     confidence: Double,
@@ -82,6 +84,7 @@ class BloodPressureExtractor : VitalExtractor {
     private val pattern =
         Regex("""(${word(BLOOD_PRESSURE_KEYWORDS)}${gap(20)})?$NUMBER_START(\d{2,3})/(\d{2,3})$NUMBER_END""")
 
+    /** Finds every number pair; explicit confidence with a blood pressure keyword, lower confidence without. */
     override fun extract(normalized: String): List<ExtractionOutcome> = pattern
         .findAll(normalized)
         .map { match ->
@@ -99,6 +102,7 @@ class BloodPressureExtractor : VitalExtractor {
 class PulseExtractor : VitalExtractor {
     private val pattern = Regex("""${word(PULSE_KEYWORDS)}${gap(15)}(\d{2,3})$NUMBER_END""")
 
+    /** Finds every pulse keyword followed by a two- or three-digit number, always at explicit confidence. */
     override fun extract(normalized: String): List<ExtractionOutcome> = pattern
         .findAll(normalized)
         .map { match ->
@@ -123,6 +127,7 @@ class TemperatureExtractor : VitalExtractor {
                 """(?:\s*($TEMPERATURE_UNITS)(?![a-z]))?""",
         )
 
+    /** Finds every temperature, stores it in Celsius and sets the confidence by how clearly the unit was named. */
     override fun extract(normalized: String): List<ExtractionOutcome> = pattern
         .findAll(normalized)
         .map { match ->

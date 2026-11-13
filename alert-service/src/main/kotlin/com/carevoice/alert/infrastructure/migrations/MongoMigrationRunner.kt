@@ -112,9 +112,14 @@ class MongoMigrationRunner(
         }
     }
 
+    /** All recorded migrations, keyed by version. */
     private suspend fun appliedMigrations(): Map<Int, Document> =
         history.find().sort(Sorts.ascending(VERSION)).toList().associateBy { it.getInteger(VERSION) }
 
+    /**
+     * Fails when the database has a version this code does not know, or when the checksum of an applied
+     * migration no longer matches the code (someone edited it).
+     */
     private fun verifyCompatible(applied: Map<Int, Document>) {
         val known = migrations.associateBy { it.version }
         val unknown = applied.keys.filter { it !in known }
@@ -138,6 +143,7 @@ class MongoMigrationRunner(
         }
     }
 
+    /** Writes the history record. A duplicate version is ignored, because then the record already exists. */
     private suspend fun record(migration: MongoMigration) {
         try {
             history.insertOne(
@@ -151,6 +157,7 @@ class MongoMigrationRunner(
         }
     }
 
+    /** Tries to take the lock every [pollInterval] until it works; fails after [lockWait]. */
     private suspend fun acquireLock() {
         val deadline = clock.instant().plusMillis(lockWait.inWholeMilliseconds)
         while (true) {
@@ -191,6 +198,7 @@ class MongoMigrationRunner(
         }
     }
 
+    /** Moves the lock expiry forward after each migration, so a long run does not lose the lock to another pod. */
     private suspend fun renewLock() {
         locks.updateOne(
             Filters.and(Filters.eq("_id", LOCK_ID), Filters.eq(OWNER, owner)),
@@ -216,6 +224,7 @@ class MongoMigrationRunner(
         Unit
     }
 
+    /** Logs a failed release; the lock then frees itself when it expires. */
     private fun lockReleaseFailed(cause: Exception) {
         log.event(
             Level.WARN,
@@ -226,6 +235,7 @@ class MongoMigrationRunner(
         )
     }
 
+    /** Lock expiry time: [now] plus [lockTtl]. */
     private fun expiryFrom(now: Instant): Instant = now.plusMillis(lockTtl.inWholeMilliseconds)
 
     companion object {

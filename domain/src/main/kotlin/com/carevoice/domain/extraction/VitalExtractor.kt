@@ -35,9 +35,11 @@ fun interface VitalExtractor {
  * Callers do not know or care how many strategies run.
  */
 class CompositeExtractor(private val extractors: List<VitalExtractor>) : VitalExtractor {
+    /** Runs every extractor in list order and joins all their outcomes into one list. */
     override fun extract(normalized: String): List<ExtractionOutcome> = extractors.flatMap { it.extract(normalized) }
 
     companion object {
+        /** The standard rule set: blood pressure, pulse and temperature extractors. */
         fun defaultRules(): CompositeExtractor = CompositeExtractor(
             listOf(
                 BloodPressureExtractor(),

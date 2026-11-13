@@ -157,6 +157,11 @@ class OutboxRelay(
         log.event(Level.INFO, LogType.BUSINESS, "Outbox relay stopped")
     }
 
+    /**
+     * Claims due rows until [stop] is called and hands them to the workers through [channel].
+     * A failed claim waits with growing, jittered (randomized) pauses.
+     * At the end the channel is closed, so the workers stop once it is empty.
+     */
     private suspend fun claimLoop(channel: SendChannel<ClaimedEvent>) {
         var consecutiveFailures = 0
         try {
@@ -190,6 +195,7 @@ class OutboxRelay(
         }
     }
 
+    /** Claims one batch of due rows and leases them for [OutboxSettings.lease], on [Dispatchers.IO]. */
     private suspend fun claimBatch(): List<ClaimedEvent> {
         val now = clock.instant()
         val mark = TimeSource.Monotonic.markNow()
@@ -209,6 +215,7 @@ class OutboxRelay(
         return batch
     }
 
+    /** Worker loop: processes claimed rows until the channel is closed and empty; one row's error never stops it. */
     private suspend fun publishLoop(channel: ReceiveChannel<ClaimedEvent>) {
         for (claimed in channel) {
             try {
@@ -229,6 +236,10 @@ class OutboxRelay(
         }
     }
 
+    /**
+     * Publishes one claimed row and records the outcome, with the event's requestId in the MDC (log context).
+     * During shutdown the row is released instead; a row whose lease already ran out is skipped.
+     */
     private suspend fun process(claimed: ClaimedEvent) {
         val event = claimed.event
         // The publish runs seconds after the original request, on another coroutine; restoring its requestId into
@@ -362,6 +373,7 @@ class OutboxRelay(
         }
     }
 
+    /** Refreshes the pending-count and lag gauges, at most once per second, until cancelled. */
     private suspend fun statsLoop() {
         while (true) {
             try {
@@ -424,15 +436,18 @@ class OutboxRelay(
                 log.event(Level.ERROR, LogType.BUSINESS, "Uncaught exception in the outbox relay", cause = e)
             }
 
+        /** MDC values for logging one event's publish: job name, outbox row id and the original requestId. */
         private fun correlationOf(event: OutboxEvent): Map<String, String> = buildMap {
             put("job", JOB_NAME)
             put("outboxEventId", event.id.toString())
             event.requestId?.let { put("requestId", it) }
         }
 
+        /** Whole seconds from [from] to [to], never negative. */
         private fun secondsBetween(from: Instant, to: Instant): Long =
             java.time.Duration.between(from, to).seconds.coerceAtLeast(0)
 
+        /** The failure reason for the log, or null for results that have none. */
         private fun PublishResult.reasonOrNull(): String? = when (this) {
             is PublishResult.Retryable -> reason
             is PublishResult.NonRetryable -> reason

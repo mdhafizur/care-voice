@@ -44,6 +44,11 @@ class ProcessObservationEvent(
 ) {
     private val log = LoggerFactory.getLogger(ProcessObservationEvent::class.java)
 
+    /**
+     * Validates the event, runs the rules and stores the alerts, exactly once per eventId.
+     * A redelivered event returns the stored result with `duplicate = true`.
+     * When the earlier attempt had not finished, the (idempotent) alert insert runs again first.
+     */
     suspend fun execute(event: ObservationRecordedEvent): ProcessingResult {
         val observation = validate(event)
         // Mongo stores dates with millisecond precision; truncating here keeps stored and returned values identical.
@@ -96,6 +101,10 @@ class ProcessObservationEvent(
         return ProcessingResult(event.eventId, existing?.alertsCreated ?: newAlerts.size, duplicate = true)
     }
 
+    /**
+     * Inserts the alerts (existing ones are skipped), then marks the event completed.
+     * The order matters: completed must only be set after the alerts are written. Logs one line per new alert.
+     */
     private suspend fun storeAlerts(eventId: String, newAlerts: List<Alert>) {
         val inserted = if (newAlerts.isEmpty()) emptyList() else alerts.insertAll(newAlerts)
         processedEvents.markCompleted(eventId)
@@ -121,6 +130,7 @@ class ProcessObservationEvent(
             throw AlertServiceException.UnsupportedSchemaVersion(event.schemaVersion, SUPPORTED_SCHEMA_VERSIONS)
         }
         val violations = mutableListOf<FieldViolation>()
+        // Records a violation when an id is blank or longer than MAX_ID_LENGTH.
         fun id(field: String, value: String) {
             if (value.isBlank()) {
                 violations += FieldViolation(field, "must not be blank")
@@ -160,6 +170,7 @@ class ProcessObservationEvent(
         )
     }
 
+    /** Builds the vital and records a violation for each value outside its range; null when any value failed. */
     private fun toVital(payload: VitalPayload, violations: MutableList<FieldViolation>): Vital? {
         val before = violations.size
         val vital =
@@ -203,6 +214,7 @@ class ProcessObservationEvent(
         val PULSE_RANGE = 1..400
         val CELSIUS_RANGE = 10.0..50.0
 
+        /** Returns the enum constant with exactly this name (case-sensitive), or null. */
         private inline fun <reified E : Enum<E>> enumValueOrNull(value: String): E? =
             enumValues<E>().firstOrNull { it.name == value }
     }

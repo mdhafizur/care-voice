@@ -156,6 +156,10 @@ fun Application.installStatusPages() {
     }
 }
 
+/**
+ * Turns a business error into its problem response with the right status code.
+ * Client errors are logged at INFO. The 503 answers add `Retry-After`, so the client knows when to try again.
+ */
 private suspend fun ApplicationCall.respondServiceError(cause: AlertServiceException) {
     when (cause) {
         is AlertServiceException.AlertNotFound -> {
@@ -249,6 +253,7 @@ private suspend fun ApplicationCall.respondServiceError(cause: AlertServiceExcep
     }
 }
 
+/** Turns an HTTP-layer error into its problem response; overload gives 503 with `Retry-After` and a WARN log. */
 private suspend fun ApplicationCall.respondApiError(cause: ApiException) {
     when (cause) {
         is ApiException.BadRequest -> {

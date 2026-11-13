@@ -8,6 +8,7 @@ import java.net.InetAddress
  * Used for `TRUSTED_PROXIES`: the proxies whose `X-Forwarded-For` header the service believes.
  */
 class IpNetwork private constructor(private val network: ByteArray, private val prefixLength: Int, val text: String) {
+    /** True when the first [prefixLength] bits of [address] equal the network's. IPv4 never matches IPv6. */
     fun contains(address: InetAddress): Boolean {
         val bytes = address.address
         if (bytes.size != network.size) return false
@@ -19,6 +20,7 @@ class IpNetwork private constructor(private val network: ByteArray, private val 
         return (bytes[fullBytes].toInt() and mask) == (network[fullBytes].toInt() and mask)
     }
 
+    /** The text this network was parsed from, as configured. */
     override fun toString(): String = text
 
     companion object {

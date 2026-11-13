@@ -23,5 +23,6 @@ object VitalExtractionPrompt {
         If no vital sign is stated, return [].
         """.trimIndent()
 
+    /** Wraps the transcript in `<transcript>` tags, so the model reads it as data and not as instructions. */
     fun userMessage(normalized: String): String = "<transcript>\n$normalized\n</transcript>"
 }

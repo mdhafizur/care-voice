@@ -40,6 +40,7 @@ object EventEnvelope {
     /** The stored W3C `traceparent`, or null when absent or malformed (validated for the same reason). */
     fun traceparentOf(event: OutboxEvent): String? = event.traceparent?.takeIf { TRACEPARENT.matches(it) }
 
+    /** One top-level field of the payload; null when the payload is not a JSON object or has no such field. */
     private fun payloadField(event: OutboxEvent, name: String): JsonPrimitive? =
         runCatching { (Json.parseToJsonElement(event.payload) as? JsonObject)?.get(name) as? JsonPrimitive }.getOrNull()
 }

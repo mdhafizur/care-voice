@@ -10,6 +10,7 @@ import java.util.UUID
 class GetTranscript(private val transcripts: TranscriptRepository) {
     private val log = LoggerFactory.getLogger(GetTranscript::class.java)
 
+    /** Returns the stored result. A malformed id or a transcript from another ward is a 404. */
     suspend fun execute(caller: Caller, transcriptId: String): TranscriptResult {
         caller.requireAnyRole()
         val id =

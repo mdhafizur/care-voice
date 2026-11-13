@@ -7,6 +7,7 @@ import javax.sql.DataSource
 
 /** Repository pattern: login accounts. */
 class PostgresUserRepository(private val dataSource: DataSource) : UserRepository {
+    /** Loads the account by username; a row with an unknown role gives null, so that user cannot log in. */
     override suspend fun findByUsername(username: String): UserAccount? = withReadConnection(dataSource) { connection ->
         connection.queryOne(
             "SELECT username, tenant_id, ward_id, role, password_hash FROM users WHERE username = ?",

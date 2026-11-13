@@ -54,6 +54,7 @@ class OpenApiContract(specResource: String) {
     fun documentsStatus(path: String, method: String, status: Int): Boolean =
         !spec.at("/paths/${escape(path)}/${method.lowercase()}/responses/$status").isMissingNode
 
+    /** Fails the test when the spec does not document [status] or the body does not match its response schema. */
     fun assertResponseMatches(
         path: String,
         method: String,
@@ -69,8 +70,10 @@ class OpenApiContract(specResource: String) {
             .isEmpty()
     }
 
+    /** Returns the spec part at a JSON pointer (a path into the document, e.g. "/components"), or a missing node. */
     fun at(pointer: String): JsonNode = spec.at(pointer)
 
+    /** Validates [body] against the schema at [pointer] and returns the error messages; empty means valid. */
     private fun validate(pointer: String, body: String): List<String> {
         // A schema document carrying the whole spec (so internal $refs resolve), pointing at the operation's schema.
         val root = (spec.deepCopy<JsonNode>() as ObjectNode).put("\$ref", "#$pointer")
@@ -88,5 +91,6 @@ class OpenApiContract(specResource: String) {
         return if (ref != null && ref.startsWith("#")) ref.removePrefix("#") else inline
     }
 
+    /** Escapes one JSON pointer segment ("~" -> "~0", "/" -> "~1"), so "/v1/alerts" stays one segment. */
     private fun escape(segment: String) = segment.replace("~", "~0").replace("/", "~1")
 }

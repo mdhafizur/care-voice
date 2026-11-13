@@ -103,6 +103,7 @@ fun main(args: Array<String>) {
 /** The HTTP module used by `main` and by tests (`testApplication { application { module(deps) } }`). */
 fun Application.module(deps: Dependencies) = httpModule(deps)
 
+/** Runs the `migrate` command and returns the process exit code: 0 on success, 1 on a config or migration error. */
 private fun runMigrations(): Int = try {
     Migrations(AppConfig.loadDatabase()).migrate()
     0
@@ -114,6 +115,7 @@ private fun runMigrations(): Int = try {
     1
 }
 
+/** Starts the HTTP server and the background work, then blocks until the shutdown hook has finished shutting down. */
 private fun runService() {
     val config =
         try {
@@ -168,6 +170,11 @@ class ServiceSystem private constructor(
     private val httpClients: List<HttpClient>,
     private val scope: CoroutineScope,
 ) {
+    /**
+     * Starts the work that runs beside the HTTP server.
+     * Order: migrations (or only a schema check), Redis, optional demo data, the broker connection,
+     * the outbox relay and the transcript retention job.
+     */
     fun startBackground() {
         migrations.onStartup()
         redis.start(scope)
@@ -206,6 +213,7 @@ class ServiceSystem private constructor(
         private val READINESS_PROPAGATION: Duration = 3.seconds
         private val RELAY_STOP_TIMEOUT: Duration = 15.seconds
 
+        /** Builds every adapter and use case from [config]. [clock] is the time source for all of them. */
         fun create(config: AppConfig, clock: Clock = Clock.systemUTC()): ServiceSystem {
             val meterRegistry = PrometheusMeterRegistry(PrometheusConfig.DEFAULT)
             val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)

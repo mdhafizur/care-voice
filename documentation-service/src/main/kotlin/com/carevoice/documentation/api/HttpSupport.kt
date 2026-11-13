@@ -96,6 +96,7 @@ suspend fun <T> ApplicationCall.respondJsonConditional(serializer: KSerializer<T
     }
 }
 
+/** Writes [value] as a JSON body with the given status. Unlike [respondJsonConditional], it sets no ETag. */
 suspend fun <T> ApplicationCall.respondJson(
     serializer: KSerializer<T>,
     value: T,
@@ -116,6 +117,7 @@ fun ApplicationCall.paginationHeaders(page: Page<*>) {
     response.header(HttpHeaders.Link, links.joinToString(", "))
 }
 
+/** Builds a link to the current path with the same query, but with `cursor` replaced (or removed when null). */
 private fun ApplicationCall.pageLink(cursor: String?): String {
     val builder = URLBuilder().takeFrom(request.uri)
     builder.parameters.remove("cursor")

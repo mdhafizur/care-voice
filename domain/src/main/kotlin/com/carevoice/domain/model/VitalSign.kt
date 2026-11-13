@@ -31,12 +31,14 @@ enum class VitalType { BLOOD_PRESSURE, PULSE, BODY_TEMPERATURE }
 data class BloodPressure private constructor(val systolic: Int, val diastolic: Int) : VitalSign {
     override val type: VitalType get() = VitalType.BLOOD_PRESSURE
 
+    /** Readable form with the unit, e.g. "120/75 mmHg". */
     override fun toString(): String = "$systolic/$diastolic mmHg"
 
     companion object {
         val SYSTOLIC_RANGE = 50..260
         val DIASTOLIC_RANGE = 30..160
 
+        /** Checks both ranges and that diastolic is lower than systolic; the first failed rule becomes the error. */
         fun of(systolic: Int, diastolic: Int): Either<ValidationError, BloodPressure> = either {
             ensure(systolic in SYSTOLIC_RANGE) {
                 OutOfRange("systolic", systolic, SYSTOLIC_RANGE.first, SYSTOLIC_RANGE.last)
@@ -63,11 +65,13 @@ data class BloodPressure private constructor(val systolic: Int, val diastolic: I
 value class Pulse private constructor(val bpm: Int) : VitalSign {
     override val type: VitalType get() = VitalType.PULSE
 
+    /** Readable form with the unit, e.g. "80 bpm". */
     override fun toString(): String = "$bpm bpm"
 
     companion object {
         val RANGE = 20..250
 
+        /** Accepts only values in [RANGE] (beats per minute); anything else is an OutOfRange error. */
         fun of(bpm: Int): Either<ValidationError, Pulse> = either {
             ensure(bpm in RANGE) { OutOfRange("pulse", bpm, RANGE.first, RANGE.last) }
             Pulse(bpm)
@@ -80,6 +84,7 @@ value class Pulse private constructor(val bpm: Int) : VitalSign {
 value class BodyTemperature private constructor(val celsius: Double) : VitalSign {
     override val type: VitalType get() = VitalType.BODY_TEMPERATURE
 
+    /** Readable form with the unit, e.g. "37.2 °C". */
     override fun toString(): String = "$celsius °C"
 
     companion object {

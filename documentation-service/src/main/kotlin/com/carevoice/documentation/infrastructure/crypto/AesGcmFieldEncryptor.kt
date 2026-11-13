@@ -36,6 +36,7 @@ class AesGcmFieldEncryptor(
 
     constructor(config: EncryptionConfig) : this(config.activeKeyId, config.keys)
 
+    /** Encrypts with the active key and a fresh random IV (the one-time start value AES-GCM needs). */
     override fun encrypt(plaintext: String): String {
         val iv = ByteArray(IV_BYTES).also(random::nextBytes)
         val cipher = Cipher.getInstance(TRANSFORMATION)
@@ -45,6 +46,10 @@ class AesGcmFieldEncryptor(
         return activeKeyId + SEPARATOR + Base64.getEncoder().encodeToString(iv + sealed)
     }
 
+    /**
+     * Decrypts with the key named in the prefix, so values written with an older key still work.
+     * Throws [DecryptionException] for an unknown key, bad base64, a too-short value or a changed ciphertext.
+     */
     override fun decrypt(ciphertext: String): String {
         val keyId = ciphertext.substringBefore(SEPARATOR, missingDelimiterValue = "")
         val key = keys[keyId] ?: throw DecryptionException("Unknown key id")

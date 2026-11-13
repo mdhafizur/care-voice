@@ -99,12 +99,17 @@ class RedisConnections(
             }
     }
 
+    /**
+     * Opens whichever of the two connections is still missing. The pub/sub connection gets one listener that hands
+     * each message to the listeners of its channel, and it subscribes to all channels registered so far.
+     */
     private fun connect() {
         if (commands == null) commands = client.connect()
         if (pubSub == null) {
             val connection = client.connectPubSub()
             connection.addListener(
                 object : RedisPubSubAdapter<String, String>() {
+                    /** Hands the message to every listener of its channel; a listener that throws is only logged. */
                     override fun message(channel: String, message: String) {
                         listeners[channel]?.forEach { listener ->
                             runCatching { listener(message) }.onFailure {
@@ -139,6 +144,7 @@ class RedisConnections(
         connection.async().publish(channel, message).await()
     }
 
+    /** Stops the background connector, then closes both connections and the client, ignoring errors. */
     suspend fun close() {
         connector?.cancelAndJoin()
         withContext(Dispatchers.IO) {

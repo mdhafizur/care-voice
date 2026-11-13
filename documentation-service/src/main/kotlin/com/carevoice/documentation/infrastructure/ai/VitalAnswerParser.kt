@@ -51,10 +51,16 @@ internal object VitalAnswerParser {
         }
     }
 
+    /** Parses [candidate] as JSON, or returns null when it is not valid JSON. */
     private fun parseOrNull(candidate: String): JsonElement? = runCatching {
         json.parseToJsonElement(candidate)
     }.getOrNull()
 
+    /**
+     * Turns one JSON entry into a candidate, or null when the entry is unusable.
+     * The type must be a known [VitalType] and the value a finite number; blood pressure also needs a diastolic value.
+     * Units longer than [MAX_UNIT_LENGTH] are dropped.
+     */
     private fun toCandidate(element: JsonElement): RawVitalCandidate? {
         val obj = element as? JsonObject ?: return null
         val type =
@@ -71,6 +77,7 @@ internal object VitalAnswerParser {
         )
     }
 
+    /** Returns the field only when it is a JSON string; numbers, objects and nulls give null. */
     private fun JsonObject.string(key: String): String? = (this[key] as? JsonPrimitive)?.takeIf { it.isString }?.content
 
     /** Accepts `120` and `"120"`, because models are inconsistent about quoting numbers. */

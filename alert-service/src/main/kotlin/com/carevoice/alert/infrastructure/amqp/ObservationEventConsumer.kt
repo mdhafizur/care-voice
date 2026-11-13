@@ -118,6 +118,7 @@ class ObservationEventConsumer(
             .maximumExpectedValue(JavaDuration.ofSeconds(10))
             .register(registry)
 
+    /** Counter of consumed events for one result (processed, duplicate, retried, ...); Micrometer reuses it. */
     private fun consumed(result: String): Counter = Counter
         .builder("carevoice.amqp.consume")
         .description("Consumed observation events by result")
@@ -216,6 +217,11 @@ class ObservationEventConsumer(
     override suspend fun isHealthy(): Boolean =
         connected && (consumerTag != null || paused) && connection?.isOpen == true && consumeChannel?.isOpen == true
 
+    /**
+     * Opens the connection, declares the topology and subscribes.
+     * It uses two channels: one to consume (limited by the prefetch count) and one to publish retries and
+     * dead letters with publisher confirms (the broker reports that it has stored the message).
+     */
     private fun connect() {
         val conn = connectionFactory.newConnection("alert-service-consumer")
         connection = conn
@@ -227,11 +233,13 @@ class ObservationEventConsumer(
         }
         (conn as? Recoverable)?.addRecoveryListener(
             object : RecoveryListener {
+                /** Marks the consumer as connected again after the client library recovered the connection. */
                 override fun handleRecovery(recoverable: Recoverable) {
                     connected = true
                     log.event(Level.INFO, LogType.EXTERNAL_REQUEST, "RabbitMQ connection recovered")
                 }
 
+                /** Only logs that automatic recovery has started; the state changes in [handleRecovery]. */
                 override fun handleRecoveryStarted(recoverable: Recoverable) {
                     log.event(Level.INFO, LogType.EXTERNAL_REQUEST, "RabbitMQ connection recovery started")
                 }
@@ -259,6 +267,7 @@ class ObservationEventConsumer(
         )
     }
 
+    /** Consumes [AmqpTopology.QUEUE] with manual acks; returns the consumer tag (the id of this subscription). */
     private fun subscribe(channel: Channel): String = channel.basicConsume(
         AmqpTopology.QUEUE,
         false,
@@ -298,6 +307,10 @@ class ObservationEventConsumer(
         }
     }
 
+    /**
+     * Puts the request id, trace ids and event id into the logging context (MDC), then processes and times it.
+     * A request id with unexpected characters is left out.
+     */
     private suspend fun handle(delivery: Delivery) {
         val headers = delivery.properties.headers.orEmpty()
         val requestId = headers[HEADER_REQUEST_ID]?.toString()
@@ -322,6 +335,12 @@ class ObservationEventConsumer(
         }
     }
 
+    /**
+     * Parses the event, runs the use case and acks on success.
+     * On failure it decides what happens to the message: bad input goes straight to the dead-letter exchange,
+     * a dependency outage may pause the consumer, and anything else is retried later.
+     * A message that arrives while paused is put back in the queue untouched.
+     */
     private suspend fun process(delivery: Delivery, headers: Map<String, Any?>) {
         val tag = delivery.envelope.deliveryTag
         if (paused) {
@@ -392,6 +411,10 @@ class ObservationEventConsumer(
         requeue(delivery.envelope.deliveryTag)
     }
 
+    /**
+     * Stops receiving new messages by cancelling the subscription, then starts a background loop that subscribes
+     * again once [health] is up. Does nothing when already paused or stopping.
+     */
     private suspend fun pause(health: DependencyHealthCheck, dependency: String) {
         val tagToCancel: String?
         synchronized(consumeLock) {
@@ -421,6 +444,7 @@ class ObservationEventConsumer(
         scope?.launch(Dispatchers.IO) { resumeWhenHealthy(health) }
     }
 
+    /** Checks [health] every [healthPollInterval] and subscribes again once it is up, until that works. */
     private suspend fun resumeWhenHealthy(health: DependencyHealthCheck) {
         while (!stopping) {
             delay(healthPollInterval)
@@ -446,6 +470,7 @@ class ObservationEventConsumer(
         }
     }
 
+    /** Asks the health check; an exception counts as not healthy. */
     private suspend fun isUp(health: DependencyHealthCheck): Boolean = try {
         health.isHealthy()
     } catch (e: CancellationException) {
@@ -467,6 +492,11 @@ class ObservationEventConsumer(
         )
     }
 
+    /**
+     * Sends a failed message to the retry queue for its attempt, or to the dead-letter exchange after the last
+     * allowed delivery. The original is acked only after the broker confirmed the copy.
+     * If publishing the retry fails, the message is nacked so the main queue moves it to the 5 s retry queue.
+     */
     private suspend fun retryOrDeadLetter(delivery: Delivery, cause: Exception) {
         val attempt = deliveryAttempt(delivery.properties.headers.orEmpty())
         if (attempt >= MAX_DELIVERIES) {
@@ -564,10 +594,12 @@ class ObservationEventConsumer(
         }
     }
 
+    /** Acks on the consume channel. The lock is needed because a channel must not be used by two threads at once. */
     private suspend fun ack(tag: Long) {
         withContext(Dispatchers.IO) { synchronized(consumeLock) { consumeChannel?.basicAck(tag, false) } }
     }
 
+    /** Closes both channels and the connection, ignoring errors, and clears the state for a clean reconnect. */
     private fun closeQuietly() {
         connected = false
         consumerTag = null
@@ -598,6 +630,10 @@ class ObservationEventConsumer(
         private val REQUEST_ID_PATTERN = Regex("[A-Za-z0-9._:-]{1,64}")
         private val TRACEPARENT_PATTERN = Regex("^[0-9a-f]{2}-([0-9a-f]{32})-([0-9a-f]{16})-[0-9a-f]{2}$")
 
+        /**
+         * Connection settings: automatic reconnect and topology recovery (queues and consumers are declared again)
+         * every 5 s, a 30 s heartbeat (keep-alive signal) and a 5 s connect timeout.
+         */
         fun defaultConnectionFactory(config: RabbitMqConfig): ConnectionFactory = ConnectionFactory().apply {
             setUri(config.url)
             setAutomaticRecoveryEnabled(true)

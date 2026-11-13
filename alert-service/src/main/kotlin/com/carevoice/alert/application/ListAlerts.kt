@@ -26,6 +26,11 @@ data class AlertPage(val items: List<Alert>, val nextCursor: String?, val prevCu
 class ListAlerts(private val alerts: AlertRepository) {
     private val log = LoggerFactory.getLogger(ListAlerts::class.java)
 
+    /**
+     * Returns one page of the ward's alerts, newest first, optionally only those with [status].
+     * A malformed cursor throws InvalidCursor (400). A well-formed cursor whose alert is not found in the ward,
+     * or whose time does not match, starts again at the first page.
+     */
     suspend fun execute(scope: WardScope, status: AlertStatus?, limit: Int, cursor: String?): AlertPage {
         require(limit in MIN_LIMIT..MAX_LIMIT) { "limit must be in $MIN_LIMIT..$MAX_LIMIT" }
         // Decode first: a malformed cursor is a 400 even when the ward has no alerts.
@@ -58,12 +63,14 @@ class ListAlerts(private val alerts: AlertRepository) {
         return page
     }
 
+    /** The newest [limit] alerts; the first page never has a previous-page cursor. */
     private suspend fun firstPage(scope: WardScope, status: AlertStatus?, limit: Int, total: Long): AlertPage {
         val rows = alerts.findPage(scope, status, null, limit + 1)
         val items = rows.take(limit)
         return AlertPage(items, nextCursorOf(items, rows.size > limit), prevCursor = null, totalCount = total)
     }
 
+    /** The page after the cursor (older alerts). It has a previous-page cursor unless it is empty. */
     private suspend fun olderPage(
         scope: WardScope,
         status: AlertStatus?,
@@ -78,6 +85,11 @@ class ListAlerts(private val alerts: AlertRepository) {
         return AlertPage(items, nextCursorOf(items, rows.size > limit), prev, total)
     }
 
+    /**
+     * The page before the cursor (newer alerts). The rows come back oldest first and are reversed here.
+     * When fewer than a full page are newer than the cursor, this is the top of the list,
+     * so the real first page is returned instead.
+     */
     private suspend fun newerPage(
         scope: WardScope,
         status: AlertStatus?,
@@ -99,6 +111,7 @@ class ListAlerts(private val alerts: AlertRepository) {
         return AlertPage(items, nextCursorOf(items, hasMore = true), prev, total)
     }
 
+    /** Cursor that points after the last item, or null when there are no more items. */
     private fun nextCursorOf(items: List<Alert>, hasMore: Boolean): String? {
         val last = items.lastOrNull() ?: return null
         return if (hasMore) CursorCodec.encode(Keyset(last.createdAt, last.id, Keyset.Direction.OLDER)) else null

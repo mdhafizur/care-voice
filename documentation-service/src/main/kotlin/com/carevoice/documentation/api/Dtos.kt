@@ -31,6 +31,7 @@ val ProblemJson: Json =
 
 @Serializable
 data class TokenRequest(val username: String, val password: String) {
+    /** Hides the password, so the request can be logged safely. */
     override fun toString(): String = "TokenRequest(username=$username, password=***)"
 }
 

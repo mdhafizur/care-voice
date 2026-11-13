@@ -57,6 +57,10 @@ fun ApplicationCall.caller(): Caller = principal<CallerPrincipal>()?.caller ?: t
  */
 private val authLog = LoggerFactory.getLogger("com.carevoice.documentation.api.Authentication")
 
+/**
+ * Installs bearer token checks under the name [JWT_AUTH] (rules in the comment above [authLog]).
+ * A token must carry `sub`, tenant, ward and roles; role names that are not known are dropped.
+ */
 fun Application.installJwtAuthentication(config: JwtConfig, clock: Clock) {
     val tokenVerifier = jwtVerifier(config, clock)
     install(Authentication) {
@@ -130,6 +134,7 @@ fun jwtVerifier(config: JwtConfig, clock: Clock): JWTVerifier {
  * can wrap the route handler in a coroutine context such as an MDC.
  */
 private object AroundCallHook : Hook<suspend (ApplicationCall, suspend () -> Unit) -> Unit> {
+    /** Intercepts the `Call` phase and gives [handler] the rest of the pipeline as its `proceed` function. */
     override fun install(
         pipeline: ApplicationCallPipeline,
         handler: suspend (ApplicationCall, suspend () -> Unit) -> Unit,
@@ -159,6 +164,7 @@ val AuthenticatedMdc =
         }
     }
 
+/** Sets `userId`, `tenantId` and `wardId` in the MDC (per-thread fields added to every log line). */
 private fun putCallerMdc(caller: Caller) {
     MDC.put("userId", caller.username)
     MDC.put("tenantId", caller.tenantId)

@@ -37,6 +37,10 @@ object MongoClientFactory {
     val SERVER_SELECTION_TIMEOUT: Duration = 3.seconds
     val WRITE_CONCERN_TIMEOUT: Duration = 5.seconds
 
+    /**
+     * All client settings, see the class comment for the reasons. The URI is applied first, so the explicit
+     * settings after it win. Also used on its own, without creating a client.
+     */
     fun settings(config: MongoConfig, registry: MeterRegistry): MongoClientSettings = MongoClientSettings
         .builder()
         .applyConnectionString(ConnectionString(config.uri))
@@ -62,6 +66,7 @@ object MongoClientFactory {
         }.addCommandListener(MongoMetricsCommandListener(registry))
         .build()
 
+    /** Creates the client; call it once per process, because each client keeps its own connection pool. */
     fun create(config: MongoConfig, registry: MeterRegistry): MongoClient =
         MongoClient.create(settings(config, registry))
 }

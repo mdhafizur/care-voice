@@ -11,6 +11,7 @@ import com.carevoice.domain.model.ObservationStatus
 object ReviewPolicy {
     const val CONFIDENCE_THRESHOLD = 0.8
 
+    /** AI results always need review; rule results need review only below [CONFIDENCE_THRESHOLD]. */
     fun statusFor(extracted: ExtractedVital): ObservationStatus = when {
         extracted.source == ExtractionSource.AI -> ObservationStatus.NEEDS_REVIEW
         extracted.confidence.value < CONFIDENCE_THRESHOLD -> ObservationStatus.NEEDS_REVIEW

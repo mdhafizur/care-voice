@@ -94,6 +94,7 @@ data class GuidanceSourceDto(
  * refactoring cannot change the public API by accident (the contract tests would catch it, this prevents it).
  */
 object AlertDtoMapper {
+    /** Maps an alert to its JSON shape: enums become their names, times become ISO-8601 strings. */
     fun toDto(alert: Alert): AlertDto = AlertDto(
         id = alert.id,
         tenantId = alert.tenantId,
@@ -113,16 +114,20 @@ object AlertDtoMapper {
         version = alert.version,
     )
 
+    /** Maps each kind of vital sign to its matching DTO subtype. */
     fun toDto(vital: Vital): VitalDto = when (vital) {
         is Vital.BloodPressure -> VitalDto.BloodPressure(vital.systolic, vital.diastolic)
         is Vital.Pulse -> VitalDto.Pulse(vital.bpm)
         is Vital.BodyTemperature -> VitalDto.BodyTemperature(vital.celsius)
     }
 
+    /** Maps one page of alerts and keeps the cursor for the next page. */
     fun toDto(page: AlertPage): AlertPageDto = AlertPageDto(page.items.map(::toDto), page.nextCursor)
 
+    /** Maps the result of processing an event: the event id and how many alerts were created. */
     fun toDto(result: ProcessingResult): EventAcceptedDto = EventAcceptedDto(result.eventId, result.alertsCreated)
 
+    /** Maps protocol guidance to its response; scores are rounded and the fixed advisory disclaimer is added. */
     fun toDto(guidance: AlertGuidance): AlertGuidanceDto = AlertGuidanceDto(
         alertId = guidance.alert.id,
         rule = guidance.alert.rule.name,
@@ -148,6 +153,7 @@ object AlertDtoMapper {
         "Advisory only, based on the facility's protocols. " +
             "Clinical judgement and the physician's orders take precedence."
 
+    /** Maps a readiness report to UP or DOWN, plus the state of each single check by name. */
     fun toDto(report: ReadinessReport): HealthDto = HealthDto(
         status = if (report.ready) "UP" else "DOWN",
         checks = report.checks.mapValues { it.value.name },

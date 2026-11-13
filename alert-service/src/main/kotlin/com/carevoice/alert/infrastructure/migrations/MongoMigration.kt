@@ -32,6 +32,7 @@ interface MongoMigration {
     /** Canonical, human-readable description of the change, hashed into [checksum]. */
     val definition: String
 
+    /** Makes the change. Must be idempotent (running it twice has the same effect as once). */
     suspend fun apply(database: MongoDatabase)
 }
 
@@ -71,6 +72,10 @@ object M001CreateAlertIndexes : MongoMigration {
         "alerts: unique {eventId:1, rule:1}; {tenantId:1, wardId:1, status:1, createdAt:-1, _id:-1}; " +
             "{tenantId:1, wardId:1, createdAt:-1, _id:-1}"
 
+    /**
+     * Creates the alerts collection if needed, then its indexes.
+     * Creating an index that already exists with the same options changes nothing.
+     */
     override suspend fun apply(database: MongoDatabase) {
         createCollectionIfMissing(database, AlertFields.COLLECTION)
         database.getCollection(AlertFields.COLLECTION, Document::class.java).createIndexes(indexes).toList()
@@ -90,6 +95,10 @@ object M002CreateProcessedEventsIndexes : MongoMigration {
     override val definition: String =
         "processed_events: unique {eventId:1}; TTL {processedAt:1} expireAfter=${RETENTION_DAYS}d"
 
+    /**
+     * Creates the processed_events collection if needed, then its two indexes:
+     * the unique one and the TTL one (TTL: MongoDB deletes the record after a set time).
+     */
     override suspend fun apply(database: MongoDatabase) {
         createCollectionIfMissing(database, ProcessedEventFields.COLLECTION)
         database.getCollection(ProcessedEventFields.COLLECTION, Document::class.java).createIndexes(
@@ -117,6 +126,7 @@ object M003CreateProtocolChunkIndexes : MongoMigration {
 
     override val definition: String = "protocol_chunks: {model:1, order:1}; protocol_corpora: collection"
 
+    /** Creates both protocol collections if needed, then the index on model and order. */
     override suspend fun apply(database: MongoDatabase) {
         createCollectionIfMissing(database, ProtocolChunkFields.COLLECTION)
         createCollectionIfMissing(database, ProtocolChunkFields.CORPUS_COLLECTION)
@@ -137,6 +147,7 @@ object Migrations {
         listOf(M001CreateAlertIndexes, M002CreateProcessedEventsIndexes, M003CreateProtocolChunkIndexes)
 }
 
+/** Creates the collection only when it does not exist yet; another pod creating it at the same time is fine. */
 private suspend fun createCollectionIfMissing(database: MongoDatabase, name: String) {
     val existing = mutableListOf<String>()
     database.listCollectionNames().collect { existing += it }
@@ -152,6 +163,7 @@ private suspend fun createCollectionIfMissing(database: MongoDatabase, name: Str
 
 private const val NAMESPACE_EXISTS = 48
 
+/** SHA-256 hash of [text] as a lowercase hex string; used for migration checksums. */
 internal fun sha256(text: String): String = java.security.MessageDigest
     .getInstance("SHA-256")
     .digest(text.toByteArray(Charsets.UTF_8))

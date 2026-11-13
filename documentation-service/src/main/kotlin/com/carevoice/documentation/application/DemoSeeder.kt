@@ -39,6 +39,7 @@ class DemoSeeder(
         const val LOCK_NAME = "carevoice:demo-seed"
         const val TENANT = "sunrise-care"
 
+        /** The fixed demo data: two wards with three residents each, and three users who all share [passwordHash]. */
         fun dataset(passwordHash: String): DemoDataset {
             val residents =
                 (1..6).map { n ->

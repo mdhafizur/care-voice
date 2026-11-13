@@ -168,6 +168,10 @@ class AmqpEventPublisher(
         }
     }
 
+    /**
+     * Publishes one event to RabbitMQ behind the circuit breaker (a switch that stops calls during a long outage)
+     * and counts the result. Throws when the publisher was already closed.
+     */
     override suspend fun publish(event: OutboxEvent): PublishResult {
         check(!closed) { "AmqpEventPublisher is closed" }
         val message = AmqpMessages.toMessage(event, clock)
@@ -192,6 +196,10 @@ class AmqpEventPublisher(
         }
     }
 
+    /**
+     * Borrows a channel, publishes the message and waits for the broker's confirm.
+     * Only a channel whose publish was confirmed goes back to the pool; any other channel is closed.
+     */
     private suspend fun send(message: AmqpMessage): PublishResult {
         val pooled =
             try {
@@ -234,6 +242,7 @@ class AmqpEventPublisher(
         }
     }
 
+    /** Takes an open idle channel from the pool, or opens a new one on the shared connection. */
     private suspend fun borrow(): PooledChannel {
         while (true) {
             val idle = idleChannels.pollFirst() ?: break
@@ -244,6 +253,7 @@ class AmqpEventPublisher(
         return runInterruptible(Dispatchers.IO) { PooledChannel.open(conn) }
     }
 
+    /** Returns the channel to the pool, or closes it when the publisher is closed or the pool is already full. */
     private fun release(pooled: PooledChannel) {
         if (!closed && pooled.channel.isOpen && idleChannels.size < maxIdleChannels) {
             idleChannels.offerFirst(pooled)
@@ -277,6 +287,7 @@ class AmqpEventPublisher(
         }
     }
 
+    /** Declares the three durable exchanges; doing it again with the same arguments changes nothing. */
     private fun declareExchanges(channel: Channel) {
         channel.exchangeDeclare(EVENTS_EXCHANGE, BuiltinExchangeType.TOPIC, true)
         channel.exchangeDeclare(RETRY_EXCHANGE, BuiltinExchangeType.DIRECT, true)
@@ -299,6 +310,10 @@ class AmqpEventPublisher(
             channel.confirmSelect()
         }
 
+        /**
+         * Publishes with `mandatory = true` and waits up to [timeout] for the broker's ack.
+         * Published only when the broker acked and did not hand the message back as unroutable.
+         */
         fun publishAndConfirm(message: AmqpMessage, timeout: Duration): PublishResult {
             returned.set(null)
             channel.basicPublish(message.exchange, message.routingKey, true, message.properties, message.body)
@@ -321,6 +336,7 @@ class AmqpEventPublisher(
         }
 
         companion object {
+            /** Opens a new channel and switches it to confirm mode with the return listener. */
             fun open(connection: Connection): PooledChannel = PooledChannel(connection.createChannel())
         }
     }
@@ -346,6 +362,7 @@ class AmqpEventPublisher(
 
         private val log = LoggerFactory.getLogger(AmqpEventPublisher::class.java)
 
+        /** Metric tag for a publish result, one of [RESULTS]. */
         private fun resultTag(result: PublishResult): String = when (result) {
             PublishResult.Published -> "published"
             is PublishResult.Retryable -> "retry"
@@ -384,6 +401,10 @@ object AmqpMessages {
     fun routingKey(event: OutboxEvent): String =
         "${event.eventType}.v${EventEnvelope.schemaVersionOf(event) ?: ObservationRecordedEvent.SCHEMA_VERSION}"
 
+    /**
+     * Builds the AMQP message for an outbox row: persistent delivery, `eventId` as message id, the correlation headers,
+     * and the stored payload as the body, unchanged.
+     */
     fun toMessage(event: OutboxEvent, clock: Clock = Clock.systemUTC()): AmqpMessage {
         val headers =
             buildMap<String, Any> {
@@ -417,6 +438,7 @@ object AmqpMessages {
         )
     }
 
+    /** Reads `occurredAt` from the payload, or null when the payload has no readable timestamp. */
     private fun occurredAtOf(event: OutboxEvent): Instant? = runCatching {
         val value = (Json.parseToJsonElement(event.payload) as JsonObject)["occurredAt"] as JsonPrimitive
         Instant.parse(value.content)

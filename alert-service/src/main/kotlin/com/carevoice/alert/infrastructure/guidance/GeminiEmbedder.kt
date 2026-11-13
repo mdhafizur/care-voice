@@ -56,11 +56,14 @@ class GeminiEmbedder(
         require(dimensions in 128..3072) { "dimensions must be in 128..3072" }
     }
 
+    /** Embeds the protocol chunks as documents, in batches of at most [MAX_BATCH] texts per call. */
     override suspend fun embedDocuments(texts: List<String>): List<FloatArray> =
         texts.chunked(MAX_BATCH).flatMap { embed(it, Purpose.DOCUMENT) }
 
+    /** Embeds the alert text as a search query (the other side of the asymmetric retrieval). */
     override suspend fun embedQuery(text: String): FloatArray = embed(listOf(text), Purpose.QUERY).single()
 
+    /** Sends one batch request and checks that one vector came back per text, in the same order. */
     private suspend fun embed(texts: List<String>, purpose: Purpose): List<FloatArray> {
         val response =
             httpClient.post(endpoint) {
@@ -76,6 +79,10 @@ class GeminiEmbedder(
         return vectors
     }
 
+    /**
+     * JSON body for `batchEmbedContents`: one request per text, with the purpose as `taskType` or in the text,
+     * depending on the model.
+     */
     fun requestBody(texts: List<String>, purpose: Purpose): String = buildJsonObject {
         putJsonArray("requests") {
             texts.forEach { text ->
@@ -94,12 +101,14 @@ class GeminiEmbedder(
     private val usesTaskType: Boolean
         get() = apiModel.removePrefix("models/").let { it == "gemini-embedding-001" || it.startsWith("text-embedding") }
 
+    /** Adds the purpose as an instruction in the text, for newer models that do not take a `taskType`. */
     private fun prepared(text: String, purpose: Purpose): String = when {
         usesTaskType -> text
         purpose == Purpose.DOCUMENT -> "title: none | text: $text"
         else -> "task: search result | query: $text"
     }
 
+    /** Hides the API key, so the embedder can be logged safely. */
     override fun toString(): String = "GeminiEmbedder(model=$model, apiKey=***)"
 
     enum class Purpose(val taskType: String) {

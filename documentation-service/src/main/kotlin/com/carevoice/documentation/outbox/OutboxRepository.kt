@@ -52,6 +52,7 @@ internal class OutboxRepository(private val dataSource: DataSource) {
         }
     }.sortedBy { it.createdAt }
 
+    /** Marks the row PUBLISHED; false when our lease no longer matches (another instance owns the row now). */
     fun markPublished(claimed: ClaimedEvent, now: Instant): Boolean = update(
         "UPDATE outbox SET status = 'PUBLISHED', published_at = ?, last_error = NULL $FENCE",
         claimed,
@@ -60,6 +61,7 @@ internal class OutboxRepository(private val dataSource: DataSource) {
         1
     }
 
+    /** Stores the new attempt count, the next try time and the error; false when our lease no longer matches. */
     fun scheduleRetry(claimed: ClaimedEvent, attempts: Int, nextAttemptAt: Instant, error: String): Boolean = update(
         "UPDATE outbox SET attempts = ?, next_attempt_at = ?, last_error = ? $FENCE",
         claimed,
@@ -70,6 +72,7 @@ internal class OutboxRepository(private val dataSource: DataSource) {
         3
     }
 
+    /** Marks the row DEAD (no more retries) with the last error; false when our lease no longer matches. */
     fun markDead(claimed: ClaimedEvent, attempts: Int, error: String): Boolean = update(
         "UPDATE outbox SET status = 'DEAD', attempts = ?, last_error = ? $FENCE",
         claimed,
@@ -131,6 +134,7 @@ internal class OutboxRepository(private val dataSource: DataSource) {
         }
     }
 
+    /** Maps a claimed row to a [ClaimedEvent] that carries our lease. */
     private fun ResultSet.toClaimedEvent(leaseUntil: Instant) = ClaimedEvent(
         event =
         OutboxEvent(
@@ -146,6 +150,7 @@ internal class OutboxRepository(private val dataSource: DataSource) {
         createdAt = getObject("created_at", OffsetDateTime::class.java).toInstant(),
     )
 
+    /** Cuts the error text to [MAX_ERROR_LENGTH] characters, ending with "…" when it was cut. */
     private fun String.limitForColumn() = if (length <= MAX_ERROR_LENGTH) this else take(MAX_ERROR_LENGTH - 1) + "…"
 
     private companion object {

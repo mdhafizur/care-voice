@@ -80,6 +80,10 @@ class SubmitTranscript(
                 .register(meterRegistry)
         }
 
+    /**
+     * Runs the steps in the class comment. `replayed` in the outcome is true when a stored response is returned.
+     * A malformed resident id is a 404, like an unknown one. A transcript the domain rejects is a 422.
+     */
     suspend fun execute(caller: Caller, command: SubmitTranscriptCommand): SubmitTranscriptOutcome {
         caller.requireAnyRole()
         val residentId =
@@ -210,6 +214,7 @@ class SubmitTranscript(
         }
     }
 
+    /** Returns the stored response when the body is the same as before; a different body with the same key is a 409. */
     private fun replay(existing: TranscriptRecord, requestHash: String): SubmitTranscriptOutcome {
         if (existing.requestHash != requestHash) {
             throw ApplicationError.Conflict(
@@ -243,6 +248,7 @@ class SubmitTranscript(
         }
     }
 
+    /** Builds the response and the observation records (version 0, not confirmed) with a new transcript id. */
     private fun buildResult(caller: Caller, resident: Resident, processed: ProcessingResult): TranscriptResult {
         val transcriptId = newTranscriptId()
         return TranscriptResult(
@@ -266,6 +272,7 @@ class SubmitTranscript(
         )
     }
 
+    /** Counts one stored observation, tagged by vital type, source and status. */
     private fun recordObservationMetric(record: ObservationRecord) {
         Counter
             .builder(OBSERVATIONS_METRIC)
@@ -326,6 +333,7 @@ internal fun ObservationRecord.toEvent(eventId: UUID): ObservationRecordedEvent 
     status = observation.status.name,
 )
 
+/** Mapper: domain vital sign to its payload in the published event. */
 internal fun VitalSign.toPayload(): VitalPayload = when (this) {
     is BloodPressure -> VitalPayload.BloodPressure(systolic, diastolic)
     is Pulse -> VitalPayload.Pulse(bpm)

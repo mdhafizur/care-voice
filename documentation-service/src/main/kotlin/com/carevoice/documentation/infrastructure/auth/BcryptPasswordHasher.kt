@@ -10,8 +10,10 @@ import java.util.Base64
  * `users` table does not turn into passwords cheaply. [cost] is injectable so unit tests can use the minimum (4).
  */
 class BcryptPasswordHasher(private val cost: Int = DEFAULT_COST) : PasswordHasher {
+    /** Hashes with bcrypt at [cost]; a random salt is part of every hash. */
     override fun hash(password: String): String = BCrypt.withDefaults().hashToString(cost, password.toCharArray())
 
+    /** Checks the password against a bcrypt hash; a malformed hash gives false instead of an exception. */
     override fun verify(password: String, hash: String): Boolean =
         runCatching { BCrypt.verifyer().verify(password.toCharArray(), hash.toCharArray()).verified }
             .getOrDefault(false)
