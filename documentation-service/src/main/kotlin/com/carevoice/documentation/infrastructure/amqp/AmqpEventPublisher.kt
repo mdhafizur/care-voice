@@ -13,7 +13,6 @@ import com.rabbitmq.client.BuiltinExchangeType
 import com.rabbitmq.client.Channel
 import com.rabbitmq.client.Connection
 import com.rabbitmq.client.ConnectionFactory
-import com.rabbitmq.client.ReturnCallback
 import io.github.resilience4j.circuitbreaker.CircuitBreaker
 import io.micrometer.core.instrument.Counter
 import io.micrometer.core.instrument.MeterRegistry
@@ -31,9 +30,6 @@ import kotlinx.coroutines.withContext
 import org.slf4j.LoggerFactory
 import org.slf4j.event.Level
 import java.time.Clock
-import java.util.concurrent.ConcurrentLinkedDeque
-import java.util.concurrent.TimeoutException
-import java.util.concurrent.atomic.AtomicReference
 import kotlin.coroutines.cancellation.CancellationException
 import kotlin.time.Duration
 import kotlin.time.Duration.Companion.seconds
@@ -82,7 +78,7 @@ class AmqpEventPublisher(
     meterRegistry: MeterRegistry,
     private val confirmTimeout: Duration = 5.seconds,
     circuitBreakerSettings: CircuitBreakerSettings = CircuitBreakerSettings(),
-    private val maxIdleChannels: Int = DEFAULT_MAX_IDLE_CHANNELS,
+    maxIdleChannels: Int = DEFAULT_MAX_IDLE_CHANNELS,
     private val clock: Clock = Clock.systemUTC(),
 ) : EventPublisher {
     private val factory: ConnectionFactory =
@@ -107,7 +103,7 @@ class AmqpEventPublisher(
 
     @Volatile
     private var closed = false
-    private val idleChannels = ConcurrentLinkedDeque<PooledChannel>()
+    private val channels = ChannelPool(maxIdleChannels)
 
     private val counters: Map<String, Counter> =
         RESULTS.associateWith {
@@ -182,7 +178,7 @@ class AmqpEventPublisher(
         closed = true
         withContext(Dispatchers.IO) {
             connectLock.withLock {
-                generateSequence { idleChannels.pollFirst() }.forEach { it.closeQuietly() }
+                channels.closeAll()
                 connection?.let { runCatching { it.close(CLOSE_TIMEOUT_MS) } }
                 connection = null
             }
@@ -235,28 +231,15 @@ class AmqpEventPublisher(
         } finally {
             // Step 3: a healthy channel goes back to the pool; any other one is closed.
             // Closing is a blocking RPC; it must run off the caller's thread and even when the caller was cancelled.
-            withContext(NonCancellable + Dispatchers.IO) { if (healthy) release(pooled) else pooled.closeQuietly() }
+            withContext(NonCancellable + Dispatchers.IO) { channels.giveBack(pooled, keep = healthy && !closed) }
         }
     }
 
     /** Takes an open idle channel from the pool, or opens a new one on the shared connection. */
     private suspend fun borrow(): PooledChannel {
-        while (true) {
-            val idle = idleChannels.pollFirst() ?: break
-            if (idle.channel.isOpen) return idle
-            idle.closeQuietly()
-        }
+        channels.takeIdle()?.let { return it }
         val conn = connection()
         return runInterruptible(Dispatchers.IO) { PooledChannel.open(conn) }
-    }
-
-    /** Returns the channel to the pool, or closes it when the publisher is closed or the pool is already full. */
-    private fun release(pooled: PooledChannel) {
-        if (!closed && pooled.channel.isOpen && idleChannels.size < maxIdleChannels) {
-            idleChannels.offerFirst(pooled)
-        } else {
-            pooled.closeQuietly()
-        }
     }
 
     /**
@@ -293,57 +276,6 @@ class AmqpEventPublisher(
         channel.exchangeDeclare(EVENTS_EXCHANGE, BuiltinExchangeType.TOPIC, true)
         channel.exchangeDeclare(RETRY_EXCHANGE, BuiltinExchangeType.DIRECT, true)
         channel.exchangeDeclare(DEAD_LETTER_EXCHANGE, BuiltinExchangeType.DIRECT, true)
-    }
-
-    /**
-     * One channel in confirm mode plus the return listener that reports unroutable messages. Used by one coroutine
-     * at a time (borrowed from the pool), which is what makes the per-channel [returned] slot safe.
-     */
-    private class PooledChannel private constructor(val channel: Channel) {
-        private val returned = AtomicReference<String?>(null)
-
-        init {
-            channel.addReturnListener(
-                ReturnCallback { ret ->
-                    // replyCode is an AMQP reply code, here usually 312 NO_ROUTE: no queue is bound for this
-                    // routing key. Official list: https://www.rabbitmq.com/amqp-0-9-1-reference.html
-                    returned.set("unroutable: ${ret.replyCode} ${ret.replyText}")
-                },
-            )
-            channel.confirmSelect()
-        }
-
-        /**
-         * Publishes with `mandatory = true` and waits up to [timeout] for the broker's ack.
-         * Published only when the broker acked and did not hand the message back as unroutable.
-         */
-        fun publishAndConfirm(message: AmqpMessage, timeout: Duration): PublishResult {
-            returned.set(null)
-            // The `true` is the `mandatory` flag: an unroutable message comes back with `basic.return` (see the
-            // class comment) instead of being dropped.
-            channel.basicPublish(message.exchange, message.routingKey, true, message.properties, message.body)
-            val acked =
-                try {
-                    channel.waitForConfirms(timeout.inWholeMilliseconds)
-                } catch (_: TimeoutException) {
-                    return PublishResult.Retryable("confirm timeout after $timeout")
-                }
-            returned.get()?.let { return PublishResult.Retryable(it) }
-            return if (acked) PublishResult.Published else PublishResult.Retryable("nacked by broker")
-        }
-
-        /**
-         * `abort` rather than `close`: the channel may have unconfirmed messages or a broker that stopped answering,
-         * and abort never throws and does not wait for outstanding confirms.
-         */
-        fun closeQuietly() {
-            runCatching { channel.abort() }
-        }
-
-        companion object {
-            /** Opens a new channel and switches it to confirm mode with the return listener. */
-            fun open(connection: Connection): PooledChannel = PooledChannel(connection.createChannel())
-        }
     }
 
     companion object {
