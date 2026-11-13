@@ -30,7 +30,9 @@ data class PageCursor(val direction: Direction, val recordedAt: Instant, val id:
          */
         private const val MAX_LENGTH = 200
 
-        /** Returns null for a malformed cursor (→ 400). A well-formed cursor that matches no row yields the first page. */
+        /**
+         * Returns null for a malformed cursor (→ 400). A well-formed cursor that matches no row yields the first page.
+         */
         fun decode(raw: String): PageCursor? {
             // Step 1: reject an empty or too long cursor. Every bad cursor gives null, not an error.
             if (raw.isEmpty() || raw.length > MAX_LENGTH) return null
@@ -51,12 +53,7 @@ data class PageCursor(val direction: Direction, val recordedAt: Instant, val id:
                 } catch (_: DateTimeParseException) {
                     return null
                 }
-            val id =
-                try {
-                    UUID.fromString(parts[2]).takeIf { it.toString() == parts[2].lowercase() }
-                } catch (_: IllegalArgumentException) {
-                    null
-                } ?: return null
+            val id = parseUuid(parts[2]) ?: return null
             return PageCursor(direction, instant, id)
         }
 

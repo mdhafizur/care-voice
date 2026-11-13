@@ -40,32 +40,12 @@ class ConfirmObservation(
                 val current =
                     observations.findById(caller.tenantId, caller.wardId, id)
                         ?: throw ApplicationError.NotFound("Observation", observationId)
-                // Step 3: the client must send the version it last saw, and it must still be the
-                // current one, so nobody confirms a note that changed after they read it.
+                // Step 3: the client must send the version it last saw (428) and it must still be the current one
+                // (412), so nobody confirms a note that changed after they read it. A note that is already
+                // confirmed cannot be confirmed again (409).
                 if (expectedVersion == null) throw ApplicationError.PreconditionRequired()
-                if (current.version != expectedVersion) {
-                    log.event(
-                        Level.DEBUG,
-                        LogType.BUSINESS,
-                        "Confirm refused: stale version",
-                        "observationId" to observationId,
-                        "expectedVersion" to expectedVersion,
-                        "currentVersion" to current.version,
-                    )
-                    throw ApplicationError.PreconditionFailed()
-                }
-                // Step 4: a note that is already confirmed cannot be confirmed again (409).
-                if (current.observation.status == ObservationStatus.CONFIRMED) {
-                    log.event(
-                        Level.DEBUG,
-                        LogType.BUSINESS,
-                        "Confirm refused: already confirmed",
-                        "observationId" to observationId,
-                        "confirmedBy" to current.confirmedBy,
-                    )
-                    throw ApplicationError.Conflict("already-confirmed", "The observation is already confirmed.")
-                }
-                // Step 5: confirm with a conditional update (it changes the row only if the version
+                requireConfirmable(current, observationId, expectedVersion)
+                // Step 4: confirm with a conditional update (it changes the row only if the version
                 // is still the same) and write the audit row in the same transaction.
                 val now = clock.instant()
                 when (
@@ -108,7 +88,7 @@ class ConfirmObservation(
                     ConfirmOutcome.NotFound -> throw ApplicationError.NotFound("Observation", observationId)
                 }
             }
-        // Step 6: after the commit, log the result and tell the cache to drop this ward's pages.
+        // Step 5: after the commit, log the result and tell the cache to drop this ward's pages.
         log.event(
             Level.INFO,
             LogType.BUSINESS,
@@ -126,5 +106,33 @@ class ConfirmObservation(
             // The bus adapter already logged and counted the failure.
         }
         return confirmed
+    }
+
+    /**
+     * Throws when [current] may not be confirmed: 412 when its version is no longer [expectedVersion], 409 when it is
+     * already confirmed. The version is checked first, as the class comment says.
+     */
+    private fun requireConfirmable(current: ObservationRecord, observationId: String, expectedVersion: Int) {
+        if (current.version != expectedVersion) {
+            log.event(
+                Level.DEBUG,
+                LogType.BUSINESS,
+                "Confirm refused: stale version",
+                "observationId" to observationId,
+                "expectedVersion" to expectedVersion,
+                "currentVersion" to current.version,
+            )
+            throw ApplicationError.PreconditionFailed()
+        }
+        if (current.observation.status == ObservationStatus.CONFIRMED) {
+            log.event(
+                Level.DEBUG,
+                LogType.BUSINESS,
+                "Confirm refused: already confirmed",
+                "observationId" to observationId,
+                "confirmedBy" to current.confirmedBy,
+            )
+            throw ApplicationError.Conflict("already-confirmed", "The observation is already confirmed.")
+        }
     }
 }

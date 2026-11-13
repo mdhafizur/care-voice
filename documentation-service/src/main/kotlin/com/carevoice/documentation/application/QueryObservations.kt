@@ -43,20 +43,11 @@ class QueryObservations(
         val key = ObservationQueryKey(caller.tenantId, caller.wardId, filter, page)
         return cache.getOrLoad(key) { readObservations.query(caller.tenantId, caller.wardId, filter, page) }.also {
             if (log.isDebugEnabled) {
-                // Which filters were used (names only), not their values.
-                val used =
-                    listOfNotNull(
-                        "residentIds".takeIf { filter.residentIds.isNotEmpty() },
-                        "vitalTypes".takeIf { filter.vitalTypes.isNotEmpty() },
-                        "status".takeIf { filter.status != null },
-                        "recordedFrom".takeIf { from != null },
-                        "recordedTo".takeIf { to != null },
-                    )
                 log.event(
                     Level.DEBUG,
                     LogType.DB_OPERATION,
                     "Observations queried",
-                    "filters" to used.joinToString(",").ifEmpty { "none" },
+                    "filters" to usedFilterNames(filter),
                     "limit" to page.limit,
                     "cursor" to (page.cursor != null),
                     "returned" to it.items.size,
@@ -65,4 +56,13 @@ class QueryObservations(
             }
         }
     }
+
+    /** The names (never the values) of the filters in use, comma-separated, for example "status,recordedFrom". */
+    private fun usedFilterNames(filter: ObservationFilter): String = listOfNotNull(
+        "residentIds".takeIf { filter.residentIds.isNotEmpty() },
+        "vitalTypes".takeIf { filter.vitalTypes.isNotEmpty() },
+        "status".takeIf { filter.status != null },
+        "recordedFrom".takeIf { filter.recordedFrom != null },
+        "recordedTo".takeIf { filter.recordedTo != null },
+    ).joinToString(",").ifEmpty { "none" }
 }

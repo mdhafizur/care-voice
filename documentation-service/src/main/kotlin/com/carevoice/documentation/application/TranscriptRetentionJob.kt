@@ -13,6 +13,7 @@ import kotlinx.coroutines.slf4j.MDCContext
 import org.slf4j.LoggerFactory
 import org.slf4j.event.Level
 import java.time.Clock
+import java.time.Instant
 import kotlin.coroutines.cancellation.CancellationException
 import kotlin.time.Duration
 import kotlin.time.Duration.Companion.hours
@@ -66,38 +67,9 @@ class TranscriptRetentionJob(
         // Step 1: transcripts created before this time lose their text.
         val cutoff = clock.instant().minus(retention.toJavaDuration())
         // Step 2: take an advisory lock (a named database lock only one holder can have), so only
-        // one instance runs the job at a time.
-        val erased =
-            transactions.tryWithAdvisoryLock(LOCK_NAME) {
-                var total = 0
-                var batches = 0
-                // Step 3: erase in batches until a batch comes back short or the per-run cap is reached.
-                // The rest waits for the next run.
-                do {
-                    val count = transcripts.eraseTextCreatedBefore(cutoff, batchSize)
-                    total += count
-                    batches++
-                    log.event(
-                        Level.DEBUG,
-                        LogType.DB_OPERATION,
-                        "Transcript retention batch erased",
-                        "batch" to batches,
-                        "erased" to count,
-                        "batchSize" to batchSize,
-                        "cutoff" to cutoff.toString(),
-                    )
-                } while (count == batchSize && total < MAX_PER_RUN)
-                if (total >= MAX_PER_RUN) {
-                    log.event(
-                        Level.DEBUG,
-                        LogType.DB_OPERATION,
-                        "Transcript retention capped; rest next run",
-                        "erased" to total,
-                    )
-                }
-                total
-            }
-        // Step 4: log the result. null means another instance held the lock, so nothing was done.
+        // one instance runs the job at a time. While holding it, erase the texts in batches.
+        val erased = transactions.tryWithAdvisoryLock(LOCK_NAME) { eraseInBatches(cutoff) }
+        // Step 3: log the result. null means another instance held the lock, so nothing was done.
         if (erased == null) {
             log.event(
                 Level.DEBUG,
@@ -108,6 +80,38 @@ class TranscriptRetentionJob(
             log.event(Level.INFO, LogType.DB_OPERATION, "Transcript retention run finished", "erased" to erased)
         }
         return erased
+    }
+
+    /**
+     * Erases the text of transcripts created before [cutoff], [batchSize] at a time, until a batch comes back short
+     * or [MAX_PER_RUN] is reached. The rest waits for the next run. Returns the number of erased texts.
+     */
+    private suspend fun eraseInBatches(cutoff: Instant): Int {
+        var total = 0
+        var batches = 0
+        do {
+            val count = transcripts.eraseTextCreatedBefore(cutoff, batchSize)
+            total += count
+            batches++
+            log.event(
+                Level.DEBUG,
+                LogType.DB_OPERATION,
+                "Transcript retention batch erased",
+                "batch" to batches,
+                "erased" to count,
+                "batchSize" to batchSize,
+                "cutoff" to cutoff.toString(),
+            )
+        } while (count == batchSize && total < MAX_PER_RUN)
+        if (total >= MAX_PER_RUN) {
+            log.event(
+                Level.DEBUG,
+                LogType.DB_OPERATION,
+                "Transcript retention capped; rest next run",
+                "erased" to total,
+            )
+        }
+        return total
     }
 
     companion object {

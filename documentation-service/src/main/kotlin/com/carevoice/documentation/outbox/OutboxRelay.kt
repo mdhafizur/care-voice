@@ -1,14 +1,9 @@
 package com.carevoice.documentation.outbox
 
 import com.carevoice.documentation.resilience.Backoff
-import com.carevoice.documentation.resilience.LatencyTimers
 import com.carevoice.documentation.resilience.LogType
 import com.carevoice.documentation.resilience.event
-import io.micrometer.core.instrument.Counter
-import io.micrometer.core.instrument.Gauge
 import io.micrometer.core.instrument.MeterRegistry
-import io.micrometer.core.instrument.Tags
-import io.micrometer.core.instrument.Timer
 import kotlinx.coroutines.CoroutineExceptionHandler
 import kotlinx.coroutines.CoroutineName
 import kotlinx.coroutines.CoroutineScope
@@ -30,12 +25,10 @@ import org.slf4j.LoggerFactory
 import org.slf4j.event.Level
 import java.time.Clock
 import java.time.Instant
-import java.util.concurrent.atomic.AtomicLong
 import javax.sql.DataSource
 import kotlin.coroutines.cancellation.CancellationException
 import kotlin.random.Random
 import kotlin.time.Duration
-import kotlin.time.Duration.Companion.milliseconds
 import kotlin.time.Duration.Companion.seconds
 import kotlin.time.TimeSource
 import kotlin.time.toJavaDuration
@@ -62,6 +55,9 @@ import kotlin.time.toJavaDuration
  * cancels them all. A [supervisorScope] isolates them, and every unit of work catches its own exceptions, so one bad
  * row or one failed database call never ends the loop. [CancellationException] is always rethrown so cancellation is
  * never swallowed.
+ *
+ * Files: this class runs the loops; [PublishResultRecorder] saves each publish result on its row, and [OutboxMetrics]
+ * holds the gauges, counters and timers.
  */
 class OutboxRelay(
     dataSource: DataSource,
@@ -76,45 +72,8 @@ class OutboxRelay(
     private val stopping = MutableStateFlow(false)
     private val lifecycleLock = Any()
     private var running: Job? = null
-
-    private val pending = AtomicLong(0)
-    private val lagSeconds = AtomicLong(0)
-    private val counters: Map<Outcome, Counter>
-    private val timers: Map<Outcome, Timer>
-
-    init {
-        // Both gauges describe SHARED state (the one outbox table), so every replica reports the same value. Dashboards
-        // and alerts must aggregate them with max(), never sum(), or the backlog would look N times larger than it is.
-        // Counters and timers below are per replica and are summed (docs/CONTRACTS.md, section 9b).
-        Gauge
-            .builder(PENDING_METRIC, pending) { it.get().toDouble() }
-            .description("Outbox rows waiting to be published")
-            .register(meterRegistry)
-        Gauge
-            .builder(LAG_METRIC, lagSeconds) { it.get().toDouble() }
-            .description("Age of the oldest pending outbox row")
-            .baseUnit("seconds")
-            .register(meterRegistry)
-        // Registered up front so every result series exists (as 0) before the first event: rate() and alerting
-        // rules behave better on a series that exists than on one that appears with the first failure.
-        counters =
-            Outcome.entries.associateWith {
-                Counter
-                    .builder(PUBLISH_TOTAL_METRIC)
-                    .description("Outbox publish attempts by result")
-                    .tag("result", it.tag)
-                    .register(meterRegistry)
-            }
-        timers =
-            Outcome.entries.associateWith {
-                LatencyTimers.timer(
-                    meterRegistry,
-                    PUBLISH_SECONDS_METRIC,
-                    "Duration of one outbox publish call",
-                    Tags.of("result", it.tag),
-                )
-            }
-    }
+    private val metrics = OutboxMetrics(meterRegistry)
+    private val recorder = PublishResultRecorder(repository, settings, clock, random)
 
     /**
      * Starts the relay as a child of [scope] and returns its job. Call once; cancelling [scope] cancels the relay.
@@ -277,11 +236,10 @@ class OutboxRelay(
             val result = publishSafely(event)
             val elapsed = mark.elapsedNow()
             // Step 4: save the result on the row (published, retry later or dead), then update the metrics and log it.
-            val outcome = withContext(Dispatchers.IO) { record(claimed, result) }
-            counters.getValue(outcome).increment()
-            timers.getValue(outcome).record(elapsed.toJavaDuration())
+            val outcome = withContext(Dispatchers.IO) { recorder.record(claimed, result) }
+            metrics.recordPublish(outcome, elapsed)
             log.event(
-                if (outcome == Outcome.DEAD) Level.ERROR else Level.INFO,
+                if (outcome == PublishOutcome.DEAD) Level.ERROR else Level.INFO,
                 LogType.EXTERNAL_REQUEST,
                 "Outbox event publish finished",
                 "eventType" to event.eventType,
@@ -303,94 +261,13 @@ class OutboxRelay(
         PublishResult.Retryable("publisher error: ${e::class.simpleName}")
     }
 
-    /** Applies [result] to the row (blocking JDBC, called on Dispatchers.IO) and returns the metric outcome. */
-    private fun record(claimed: ClaimedEvent, result: PublishResult): Outcome {
-        val now = clock.instant()
-        val (outcome, applied) =
-            when (result) {
-                PublishResult.Published -> Outcome.PUBLISHED to repository.markPublished(claimed, now)
-
-                is PublishResult.NonRetryable ->
-                    Outcome.DEAD to
-                        repository.markDead(claimed, claimed.event.attempts + 1, result.reason)
-
-                is PublishResult.Retryable -> {
-                    // Give up only when both limits are passed: enough attempts and enough time since the event
-                    // was created.
-                    val attempts = claimed.event.attempts + 1
-                    val age = (now.toEpochMilli() - claimed.createdAt.toEpochMilli()).milliseconds
-                    if (attempts >= settings.maxAttempts && age >= settings.retryFor) {
-                        Outcome.DEAD to
-                            repository.markDead(claimed, attempts, "gave up after $attempts attempts: ${result.reason}")
-                    } else {
-                        Outcome.RETRY to
-                            repository.scheduleRetry(
-                                claimed,
-                                attempts,
-                                now + retryDelay(attempts, result).toJavaDuration(),
-                                result.reason,
-                            )
-                    }
-                }
-
-                // The breaker did not call alert-service, so the event itself did not fail. Counting an attempt would
-                // let an outage of alert-service burn through maxAttempts within minutes and mark perfectly valid
-                // events DEAD (each claim would be rejected instantly). Instead the row is parked for roughly one
-                // lease, spread out so that rows trickle back in when the breaker half-opens instead of stampeding.
-                PublishResult.CircuitOpen ->
-                    Outcome.CIRCUIT_OPEN to repository.reschedule(claimed, now + circuitOpenDelay().toJavaDuration())
-            }
-        if (!applied) {
-            log.event(
-                Level.WARN,
-                LogType.DB_OPERATION,
-                "Outbox row was re-claimed by another instance, outcome dropped",
-                "result" to outcome.tag,
-            )
-        }
-        return outcome
-    }
-
-    /** Our full-jitter backoff, unless the consumer explicitly asked for a longer pause with `Retry-After`. */
-    private fun retryDelay(attempts: Int, result: PublishResult.Retryable): Duration {
-        // attempts is 1 after the first failure, whose window is base * 2^0.
-        val backoff = Backoff.fullJitter(attempts - 1, settings.backoffBase, settings.backoffCap, random)
-        val delay = maxOf(backoff, result.retryAfter ?: Duration.ZERO)
-        log.event(
-            Level.DEBUG,
-            LogType.BUSINESS,
-            "Outbox retry scheduled",
-            "attempt" to attempts,
-            "maxAttempts" to settings.maxAttempts,
-            "delayMs" to delay.inWholeMilliseconds,
-            "retryAfterHonoured" to (result.retryAfter != null && result.retryAfter >= backoff),
-        )
-        return delay
-    }
-
-    /**
-     * "Equal jitter" here (half fixed, half random) rather than full jitter: a delay near zero would re-claim the row
-     * immediately and spin on the open breaker; the fixed half guarantees a real pause.
-     */
-    private fun circuitOpenDelay(): Duration {
-        val half = settings.lease / 2
-        return (half + Backoff.fullJitter(0, half, half, random)).also {
-            log.event(
-                Level.DEBUG,
-                LogType.BUSINESS,
-                "Outbox row parked: circuit open",
-                "delayMs" to it.inWholeMilliseconds,
-            )
-        }
-    }
-
     /** Refreshes the pending-count and lag gauges, at most once per second, until cancelled. */
     private suspend fun statsLoop() {
         while (true) {
             try {
                 val stats = withContext(Dispatchers.IO) { repository.pendingStats() }
-                pending.set(stats.count)
-                lagSeconds.set(stats.oldestCreatedAt?.let { secondsBetween(it, clock.instant()) } ?: 0)
+                metrics.pending.set(stats.count)
+                metrics.lagSeconds.set(stats.oldestCreatedAt?.let { secondsBetween(it, clock.instant()) } ?: 0)
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
@@ -403,13 +280,6 @@ class OutboxRelay(
     /** Waits for [duration], but returns early as soon as [stop] is called, so shutdown never waits for a poll. */
     private suspend fun pauseUnlessStopping(duration: Duration) {
         withTimeoutOrNull(duration) { stopping.first { it } }
-    }
-
-    private enum class Outcome(val tag: String) {
-        PUBLISHED("published"),
-        RETRY("retry"),
-        DEAD("dead"),
-        CIRCUIT_OPEN("circuit_open"),
     }
 
     companion object {

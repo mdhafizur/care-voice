@@ -213,6 +213,13 @@ fun interface DistributedRateLimiter {
     suspend fun tryAcquire(scope: String, key: String, limit: Int, window: Duration): RateLimitDecision
 }
 
+/** Messages on `carevoice:cache-invalidation`. Ids only: the bus never carries personal data. */
+sealed interface CacheInvalidation {
+    data class ObservationQuery(val tenantId: String, val wardId: String) : CacheInvalidation
+
+    data class ResidentEntry(val residentId: String) : CacheInvalidation
+}
+
 /** Observer pattern across replicas: cache invalidation messages reach every instance, including the sender. */
 interface CacheInvalidationBus {
     /** Sends [message] to every instance, this one included. */
@@ -253,6 +260,9 @@ data class ObservationQueryKey(
     val filter: ObservationFilter,
     val page: PageRequest,
 )
+
+/** Readiness of one dependency, as reported in the `/readyz` body. */
+enum class HealthStatus { UP, DEGRADED, DOWN }
 
 /** A readiness probe of one dependency (database, Redis, broker). */
 interface HealthProbe {

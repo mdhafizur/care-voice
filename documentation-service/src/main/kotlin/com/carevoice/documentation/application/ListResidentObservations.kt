@@ -23,7 +23,7 @@ class ListResidentObservations(
     /** Returns one page of the resident's observations; 404 when the resident is not in the caller's ward. */
     suspend fun execute(caller: Caller, residentId: String, page: PageRequest): Page<ObservationRecord> {
         caller.requireAnyRole()
-        requireVisibleResident(caller, residentId)
+        residents.requireVisibleResident(caller, residentId, log)
         return observations.listByResident(caller.tenantId, caller.wardId, residentId, page).also {
             log.event(
                 Level.DEBUG,
@@ -41,7 +41,7 @@ class ListResidentObservations(
     /** Emits every observation of the resident, fetching [pageSize] rows per query (see the class comment). */
     fun asFlow(caller: Caller, residentId: String, pageSize: Int = PageLimits.MAX): Flow<ObservationRecord> = flow {
         caller.requireAnyRole()
-        requireVisibleResident(caller, residentId)
+        residents.requireVisibleResident(caller, residentId, log)
         var cursor: PageCursor? = null
         do {
             val page = observations.listByResident(
@@ -53,25 +53,5 @@ class ListResidentObservations(
             page.items.forEach { emit(it) }
             cursor = page.nextCursor?.let { PageCursor.decode(it) }
         } while (cursor != null)
-    }
-
-    /** Throws a 404 unless the resident exists and is in the caller's ward. Both cases look the same to the client. */
-    private suspend fun requireVisibleResident(caller: Caller, residentId: String) {
-        // A malformed id cannot exist: same 404, but without a database call.
-        if (!isWellFormedResidentId(residentId)) {
-            log.event(Level.DEBUG, LogType.BUSINESS, "Resident not visible", "reason" to "malformed-id")
-            throw ApplicationError.NotFound("Resident", residentId)
-        }
-        val resident = residents.findById(caller.tenantId, residentId)
-        if (resident == null || !caller.canSee(resident.tenantId, resident.wardId)) {
-            log.event(
-                Level.DEBUG,
-                LogType.BUSINESS,
-                "Resident not visible",
-                "residentId" to residentId.take(MAX_LOGGED_ID),
-                "reason" to if (resident == null) "not-found" else "other-ward",
-            )
-            throw ApplicationError.NotFound("Resident", residentId)
-        }
     }
 }
