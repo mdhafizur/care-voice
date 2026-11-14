@@ -30,28 +30,33 @@ class JdbcTransactions(private val dataSource: DataSource) : TransactionRunner {
      * A nested call joins the outer transaction. An unreachable database becomes a 503.
      */
     override suspend fun <T> inTransaction(block: suspend () -> T): T {
-        // Step 1: are we already inside a transaction?
-        // Nested call: join the outer transaction instead of opening a second connection.
+        // Step 1: already inside a transaction? Then join it instead of opening a second connection.
         if (currentTransactionConnection() != null) return block()
-        // Step 2: otherwise run on the IO threads with the log context (MDC); a lost database becomes a 503.
+        // Step 2: otherwise borrow a connection on the database threads and run the block in a new transaction.
         return onDatabaseThread {
-            dataSource.connection.use { connection ->
-                // Step 3: turn off auto-commit, so every statement in the block is part of one transaction.
-                connection.autoCommit = false
-                try {
-                    // Step 4: run the block with this connection in the coroutine context; commit on success.
-                    val result = withContext(TransactionConnection(connection)) { block() }
-                    connection.commit()
-                    result
-                } catch (e: Throwable) {
-                    // Step 5: on any error, roll back and rethrow; a failed rollback is added to that error.
-                    runCatching { connection.rollback() }.onFailure { e.addSuppressed(it) }
-                    throw e
-                } finally {
-                    // Step 6: give the connection back to the pool in its normal auto-commit mode.
-                    runCatching { connection.autoCommit = true }
-                }
-            }
+            dataSource.connection.use { connection -> runInNewTransaction(connection, block) }
+        }
+    }
+
+    /**
+     * One transaction on [connection]: the block runs with the connection in its coroutine context, so every
+     * repository it calls uses this same connection. Commit on success; any error rolls back and is rethrown.
+     */
+    private suspend fun <T> runInNewTransaction(connection: Connection, block: suspend () -> T): T {
+        // Step 1: turn off auto-commit, so every statement in the block is part of one transaction.
+        connection.autoCommit = false
+        try {
+            // Step 2: run the block with this connection in the coroutine context; commit on success.
+            val result = withContext(TransactionConnection(connection)) { block() }
+            connection.commit()
+            return result
+        } catch (e: Throwable) {
+            // Step 3: on any error, roll back and rethrow; a failed rollback is added to that error.
+            runCatching { connection.rollback() }.onFailure { e.addSuppressed(it) }
+            throw e
+        } finally {
+            // Step 4: give the connection back to the pool in its normal auto-commit mode.
+            runCatching { connection.autoCommit = true }
         }
     }
 
