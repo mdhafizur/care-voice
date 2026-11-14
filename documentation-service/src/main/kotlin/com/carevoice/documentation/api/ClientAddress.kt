@@ -47,7 +47,9 @@ private fun InetAddress.isIn(networks: List<IpNetwork>): Boolean = networks.any 
 /** `1.2.3.4:5678` → `1.2.3.4`, `[::1]:5678` → `::1`; a bare IPv6 address is left alone. */
 private fun withoutPort(hop: String): String = when {
     hop.startsWith("[") -> hop.substringAfter('[').substringBefore(']')
+
     // Exactly one ':' can only be IPv4 with a port; an IPv6 address always has at least two.
     hop.count { it == ':' } == 1 -> hop.substringBefore(':')
+
     else -> hop
 }

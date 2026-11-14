@@ -233,6 +233,7 @@ class PostgresObservationRepository(private val dataSource: DataSource) : Observ
 
     companion object {
         private const val SELECT_SQL = "SELECT ${ObservationRows.COLUMNS} FROM observations"
+
         // One `?` per column of `ObservationRows.COLUMNS` (17), bound in the same order by its insertParams.
         private const val INSERT_SQL =
             "INSERT INTO observations (${ObservationRows.COLUMNS}) " +
